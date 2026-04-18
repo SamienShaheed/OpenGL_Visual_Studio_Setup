@@ -4,17 +4,8 @@
 #include <vector>
 
 #include "math/types.hpp"
+#include "physics/tuning.hpp"
 
-constexpr float kArenaHalfWidth = 450.0f;
-constexpr float kArenaHalfHeight = 300.0f;
-constexpr float kArenaWallHeight = 120.0f; // Debug draw only; collision is infinite vertical planes.
-constexpr float kTopRadius = 45.0f;
-// Nominal spin rate about world +Y (upright top); slingshot launch does not add tilt or off-axis ω.
-constexpr float kTopSpinAboutWorldY = 14.0f;
-// Player-adjustable launch spin (Z-drag + [ ]), signed about world +Y; clamped to ±max (rad/s).
-// Typical magnitude floor when tuning (not enforced by clamp; brackets can cross zero).
-constexpr float kLaunchSpinYMin = 4.0f;
-constexpr float kLaunchSpinYMax = 40.0f;
 constexpr int kCircleSegments = 64;
 
 struct RigidBody {
@@ -24,7 +15,7 @@ struct RigidBody {
     Quaternion orientation;
     float mass;
     Vec3 invInertiaBody{};
-    float radius = kTopRadius;
+    float radius = 45.0f;
 };
 
 extern std::vector<RigidBody> g_rigidBodies;
@@ -36,17 +27,6 @@ inline RigidBody& launchableTop() {
     return g_rigidBodies[kLaunchableBodyIndex];
 }
 
-constexpr float kArenaFloorY = 0.0f;
-
-constexpr Vec3 kGravity = {0.0f, -520.0f, 0.0f};
-constexpr float kContactRestitution = 0.68f;
-constexpr float kFrictionMu = 0.42f;
-// Sphere–sphere: bouncier and much less “grip” than floor/wall so tops glance off instead of sticking.
-constexpr float kSphereSphereRestitution = 0.82f;
-constexpr float kSphereSphereFrictionMu = 0.14f;
-
-constexpr float kFixedTimeStepSeconds = 1.0f / 120.0f;
-constexpr int kMaxFixedStepsPerFrame = 8;
 extern float g_fixedStepAccumulator;
 
 // Per rendered frame: accumulated contact/friction stats for stick vs slide debugging (HUD + optional world draw).
@@ -121,10 +101,14 @@ struct StickSlideFrameDebug {
 extern StickSlideFrameDebug g_stickSlideFrameDebug;
 void resetStickSlideFrameDebug();
 
+void recomputeBeybladeInertia(RigidBody& body);
+void syncRigidBodiesFromTuning();
+void resetSimulationTuningToDefaults();
+
 struct LaunchIntent {
     // Horizontal velocity after launch (world XZ; y ignored).
     Vec3 horizontalVelocity{};
-    float spinAboutWorldY = kTopSpinAboutWorldY;
+    float spinAboutWorldY = 14.0f;
 };
 
 // Linear impulse at COM: J [kg·m/s] → Δv = J / m.

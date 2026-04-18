@@ -7,24 +7,26 @@
 #include <cstddef>
 #include <vector>
 
+SimulationTuning g_simTuning{};
+
 std::vector<RigidBody> g_rigidBodies = {
     {
-        {0.0f, kTopRadius, 0.0f},
+        {0.0f, g_simTuning.body0Radius, 0.0f},
         {0.0f, 0.0f, 0.0f},
-        {0.0f, kTopSpinAboutWorldY, 0.0f},
+        {0.0f, g_simTuning.defaultTopSpinY, 0.0f},
         {1.0f, 0.0f, 0.0f, 0.0f},
-        1.0f,
+        g_simTuning.body0Mass,
         {0.0f, 0.0f, 0.0f},
-        kTopRadius,
+        g_simTuning.body0Radius,
     },
     {
-        {180.0f, kTopRadius, 80.0f},
+        {180.0f, g_simTuning.body1Radius, 80.0f},
         {-90.0f, 0.0f, 55.0f},
         {0.8f, 12.0f, 2.0f},
         {1.0f, 0.0f, 0.0f, 0.0f},
-        1.0f,
+        g_simTuning.body1Mass,
         {0.0f, 0.0f, 0.0f},
-        kTopRadius,
+        g_simTuning.body1Radius,
     },
 };
 
@@ -34,6 +36,34 @@ StickSlideFrameDebug g_stickSlideFrameDebug{};
 
 void resetStickSlideFrameDebug() {
     g_stickSlideFrameDebug.reset();
+}
+
+void recomputeBeybladeInertia(RigidBody& body) {
+    const float m = body.mass;
+    const float r = body.radius;
+    const float Ispin = g_simTuning.inertiaSpinFactor * m * r * r;
+    const float Itrans = g_simTuning.inertiaTransFactor * m * r * r;
+    body.invInertiaBody = {
+        1.0f / std::max(Itrans, 1.0e-6f),
+        1.0f / std::max(Ispin, 1.0e-6f),
+        1.0f / std::max(Itrans, 1.0e-6f)
+    };
+}
+
+void syncRigidBodiesFromTuning() {
+    if (g_rigidBodies.size() < 2) {
+        return;
+    }
+    g_rigidBodies[0].mass = g_simTuning.body0Mass;
+    g_rigidBodies[0].radius = g_simTuning.body0Radius;
+    g_rigidBodies[1].mass = g_simTuning.body1Mass;
+    g_rigidBodies[1].radius = g_simTuning.body1Radius;
+    recomputeBeybladeInertia(g_rigidBodies[0]);
+    recomputeBeybladeInertia(g_rigidBodies[1]);
+}
+
+void resetSimulationTuningToDefaults() {
+    g_simTuning = SimulationTuning{};
 }
 
 static bool frictionSaturated(float jtFree, float jMax) {
@@ -150,7 +180,7 @@ static void resolveContactImpulses(
         if (denom < 1.0e-8f) {
             denom = 1.0f / body.mass;
         }
-        const float jn = -(1.0f + kContactRestitution) * vn / denom;
+        const float jn = -(1.0f + g_simTuning.contactRestitution) * vn / denom;
         applyImpulse(n * jn);
         jnApplied = std::fabs(jn);
     }
@@ -175,8 +205,9 @@ static void resolveContactImpulses(
 
     const float jtFree = -dot(vRel, t) / denomT;
 
-    const float gravitySupportImpulse = body.mass * length(kGravity) * dt * 0.45f;
-    const float jMax = kFrictionMu * (useGravityFrictionCap ? std::max(jnApplied, gravitySupportImpulse) : jnApplied);
+    const float gravitySupportImpulse = body.mass * length(g_simTuning.gravity) * dt * 0.45f;
+    const float jMax = g_simTuning.frictionMuFloor
+        * (useGravityFrictionCap ? std::max(jnApplied, gravitySupportImpulse) : jnApplied);
 
     const float jt = std::clamp(jtFree, -jMax, jMax);
     applyImpulse(t * jt);
@@ -258,7 +289,6 @@ static void applyImpulseAtContact(RigidBody& body, const Vec3& r, const Vec3& im
         body.angularVelocity + applyInvInertiaWorld(body.orientation, cross(r, impulse), body.invInertiaBody);
 }
 
-static constexpr int kSphereSphereIterations = 4;
 // Treat pairs as separated when centers are farther than this past touching distance.
 static constexpr float kSphereSeparatedTolerance = 1.0e-5f;
 
@@ -311,7 +341,7 @@ static void resolveSphereSpherePair(RigidBody& a, RigidBody& b, float dt, int id
     if (vn < 0.0f) {
         const float invMassSum = 1.0f / a.mass + 1.0f / b.mass;
         const float denom = std::max(invMassSum, 1.0e-12f);
-        jn = -(1.0f + kSphereSphereRestitution) * vn / denom;
+        jn = -(1.0f + g_simTuning.sphereSphereRestitution) * vn / denom;
         applyImpulseAtContact(a, rA, n * jn);
         applyImpulseAtContact(b, rB, n * (-jn));
     }
@@ -346,8 +376,8 @@ static void resolveSphereSpherePair(RigidBody& a, RigidBody& b, float dt, int id
     // Floor uses a large gravity proxy when jn≈0; for two tops that makes tangential friction huge and
     // they “stick” and slide. Use a small resting normal only when there was no collision impulse.
     const float minMass = std::min(a.mass, b.mass);
-    const float restingNormalImpulse = minMass * length(kGravity) * dt * 0.06f;
-    const float jMax = kSphereSphereFrictionMu * std::max(jnAbs, restingNormalImpulse);
+    const float restingNormalImpulse = minMass * length(g_simTuning.gravity) * dt * 0.06f;
+    const float jMax = g_simTuning.sphereSphereFrictionMu * std::max(jnAbs, restingNormalImpulse);
 
     const float jt = std::clamp(jtFree, -jMax, jMax);
     applyImpulseAtContact(a, rA, t * jt);
@@ -377,11 +407,12 @@ static void resolveSphereSpherePair(RigidBody& a, RigidBody& b, float dt, int id
 }
 
 static void integrateRigidBodyTranslation(RigidBody& body, float dt, int bodyIndex) {
-    body.linearVelocity = body.linearVelocity + kGravity * dt;
+    body.linearVelocity = body.linearVelocity + g_simTuning.gravity * dt;
     body.position = body.position + body.linearVelocity * dt;
 
-    resolvePlaneContact(body, bodyIndex, kArenaFloorY, body.radius, dt);
-    resolveArenaWalls(body, bodyIndex, body.radius, kArenaHalfWidth, kArenaHalfHeight, dt);
+    resolvePlaneContact(body, bodyIndex, g_simTuning.arenaFloorY, body.radius, dt);
+    resolveArenaWalls(
+        body, bodyIndex, body.radius, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight, dt);
 }
 
 static void integrateRigidBodyOrientation(RigidBody& body, float dt) {
@@ -400,7 +431,7 @@ void physicsFixedSubstep(float dt, bool skipLaunchableBody) {
         integrateRigidBodyTranslation(g_rigidBodies[i], dt, static_cast<int>(i));
     }
 
-    for (int iter = 0; iter < kSphereSphereIterations; ++iter) {
+    for (int iter = 0; iter < g_simTuning.sphereSphereIterations; ++iter) {
         for (std::size_t i = 0; i < g_rigidBodies.size(); ++i) {
             for (std::size_t j = i + 1; j < g_rigidBodies.size(); ++j) {
                 if (skipLaunchableBody && (i == kLaunchableBodyIndex || j == kLaunchableBodyIndex)) {

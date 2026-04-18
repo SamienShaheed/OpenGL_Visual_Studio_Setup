@@ -64,8 +64,9 @@ void debugOverlayDrawHud(
     ImGui::Text("Frame dt:        %.3f ms", static_cast<double>(frameDt * 1000.0f));
     ImGui::Text("ImGui FPS:       %.0f", static_cast<double>(io.Framerate));
     ImGui::Separator();
-    ImGui::Text("Fixed dt:        %.4f s", static_cast<double>(kFixedTimeStepSeconds));
-    ImGui::Text("Physics substeps:%d (max %d)", physicsSubstepsThisFrame, kMaxFixedStepsPerFrame);
+    ImGui::Text("Fixed dt:        %.4f s", static_cast<double>(g_simTuning.fixedDt));
+    ImGui::Text(
+        "Physics substeps:%d (max %d)", physicsSubstepsThisFrame, g_simTuning.maxFixedStepsPerFrame);
     ImGui::Text("Accumulator:     %.4f s", static_cast<double>(fixedStepAccumulator));
     ImGui::Separator();
 
@@ -110,6 +111,61 @@ void debugOverlayDrawHud(
     ImGui::Separator();
     ImGui::Text("Z-launch drag:   %s", draggingZLaunch ? "yes" : "no");
     ImGui::Text("Launch spin wy:  %.2f rad/s ( [ ] )", static_cast<double>(launchSpinY));
+
+    ImGui::End();
+}
+
+void debugOverlayDrawTuningPanel() {
+    ImGui::SetNextWindowPos(ImVec2(14.0f, 14.0f), ImGuiCond_FirstUseEver, ImVec2(0.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    constexpr ImGuiWindowFlags kFlags =
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+
+    ImGui::Begin("Tuning##physics", nullptr, kFlags);
+
+    ImGui::SeparatorText("Simulation");
+    ImGui::DragFloat3("Gravity", &g_simTuning.gravity.x, 2.0f, 0.0f, 0.0f, "%.1f");
+    ImGui::SliderFloat("Floor/wall restitution", &g_simTuning.contactRestitution, 0.0f, 1.0f);
+    ImGui::SliderFloat("Floor friction mu", &g_simTuning.frictionMuFloor, 0.0f, 2.0f);
+    ImGui::SliderFloat("Sphere restitution", &g_simTuning.sphereSphereRestitution, 0.0f, 1.0f);
+    ImGui::SliderFloat("Sphere friction mu", &g_simTuning.sphereSphereFrictionMu, 0.0f, 2.0f);
+    ImGui::SliderInt("Sphere-sphere iterations", &g_simTuning.sphereSphereIterations, 1, 16);
+
+    ImGui::SeparatorText("Arena");
+    ImGui::DragFloat("Half width (X)", &g_simTuning.arenaHalfWidth, 1.0f, 50.0f, 2000.0f);
+    ImGui::DragFloat("Half depth (Z)", &g_simTuning.arenaHalfHeight, 1.0f, 50.0f, 2000.0f);
+    ImGui::DragFloat("Floor Y", &g_simTuning.arenaFloorY, 0.5f, -500.0f, 500.0f);
+    ImGui::DragFloat("Wall height (visual)", &g_simTuning.arenaWallHeight, 1.0f, 0.0f, 2000.0f);
+
+    ImGui::SeparatorText("Time step");
+    float fixedDt = g_simTuning.fixedDt;
+    if (ImGui::SliderFloat("Fixed dt (s)", &fixedDt, 1.0f / 240.0f, 1.0f / 30.0f, "%.5f")) {
+        g_simTuning.fixedDt = fixedDt;
+    }
+    ImGui::SliderInt("Max substeps / frame", &g_simTuning.maxFixedStepsPerFrame, 1, 32);
+
+    ImGui::SeparatorText("Z-launch");
+    ImGui::DragFloat("Default spin wy", &g_simTuning.defaultTopSpinY, 0.25f, -80.0f, 80.0f);
+    ImGui::DragFloat("Launch spin max abs", &g_simTuning.launchSpinYMax, 0.5f, 1.0f, 120.0f);
+    ImGui::DragFloat("Launch drag min", &g_simTuning.launchDragMin, 0.05f, 0.05f, 20.0f);
+    ImGui::DragFloat("Launch strength", &g_simTuning.launchStrength, 0.05f, 0.1f, 20.0f);
+    ImGui::DragFloat("Max launch speed", &g_simTuning.maxLaunchSpeed, 5.0f, 10.0f, 5000.0f);
+    ImGui::DragFloat("Spin adjust (rad/s/s)", &g_simTuning.launchSpinAdjustRate, 0.5f, 0.5f, 200.0f);
+
+    ImGui::SeparatorText("Bodies");
+    ImGui::DragFloat("Body 0 mass", &g_simTuning.body0Mass, 0.05f, 0.05f, 100.0f);
+    ImGui::DragFloat("Body 1 mass", &g_simTuning.body1Mass, 0.05f, 0.05f, 100.0f);
+    ImGui::DragFloat("Body 0 radius", &g_simTuning.body0Radius, 0.5f, 1.0f, 300.0f);
+    ImGui::DragFloat("Body 1 radius", &g_simTuning.body1Radius, 0.5f, 1.0f, 300.0f);
+
+    ImGui::SeparatorText("Inertia (sphere model)");
+    ImGui::DragFloat("Spin factor", &g_simTuning.inertiaSpinFactor, 0.01f, 0.05f, 1.0f);
+    ImGui::DragFloat("Trans factor", &g_simTuning.inertiaTransFactor, 0.01f, 0.05f, 1.0f);
+
+    if (ImGui::Button("Reset all to defaults")) {
+        resetSimulationTuningToDefaults();
+        syncRigidBodiesFromTuning();
+    }
 
     ImGui::End();
 }

@@ -17,11 +17,6 @@ namespace {
 
 constexpr float kPerspectiveFovY = 1.0472f;
 
-constexpr float kLaunchDragMin = 0.5f;
-constexpr float kLaunchStrength = 2.2f;
-constexpr float kMaxLaunchSpeed = 720.0f;
-constexpr float kLaunchSpinAdjustRate = 10.0f; // rad/s per second while holding [ or ]
-
 bool rayIntersectPlaneY(const Vec3& eye, const Vec3& rayDir, float planeY, Vec3& outHit) {
     if (std::fabs(rayDir.y) < 1.0e-8f) {
         return false;
@@ -72,7 +67,7 @@ bool pickPointOnArenaFloor(
 }
 
 bool pointInsideArenaXZ(float x, float z) {
-    return std::fabs(x) <= kArenaHalfWidth && std::fabs(z) <= kArenaHalfHeight;
+    return std::fabs(x) <= g_simTuning.arenaHalfWidth && std::fabs(z) <= g_simTuning.arenaHalfHeight;
 }
 
 void resetLaunchableTopForSlingshot() {
@@ -83,16 +78,33 @@ void resetLaunchableTopForSlingshot() {
     b.orientation = {1.0f, 0.0f, 0.0f, 0.0f};
 }
 
-void applyBeybladeSphereInertia(RigidBody& body) {
-    const float m = body.mass;
-    const float r = body.radius;
-    const float Ispin = 0.55f * m * r * r;
-    const float Itrans = 0.32f * m * r * r;
-    body.invInertiaBody = {
-        1.0f / std::max(Itrans, 1.0e-6f),
-        1.0f / std::max(Ispin, 1.0e-6f),
-        1.0f / std::max(Itrans, 1.0e-6f)
-    };
+static void rebuildArenaMeshes(std::vector<Vec3>& arenaFloorVerts, std::vector<Vec3>& arenaWallVerts) {
+    arenaFloorVerts.clear();
+    arenaWallVerts.clear();
+    arenaFloorVerts.reserve(5000);
+    appendArenaGrid(arenaFloorVerts, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight,
+        g_simTuning.arenaFloorY, 36);
+    appendArenaBorder(arenaFloorVerts, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight,
+        g_simTuning.arenaFloorY);
+    arenaWallVerts.reserve(3000);
+    appendArenaWallFrame(arenaWallVerts, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight,
+        g_simTuning.arenaFloorY, g_simTuning.arenaWallHeight);
+}
+
+static void rebuildArenaIfDirty(std::vector<Vec3>& floor, std::vector<Vec3>& wall) {
+    static float w = -1.0f;
+    static float h = -1.0f;
+    static float fy = 1.0e10f;
+    static float wallH = -1.0f;
+    if (w == g_simTuning.arenaHalfWidth && h == g_simTuning.arenaHalfHeight
+        && fy == g_simTuning.arenaFloorY && wallH == g_simTuning.arenaWallHeight) {
+        return;
+    }
+    w = g_simTuning.arenaHalfWidth;
+    h = g_simTuning.arenaHalfHeight;
+    fy = g_simTuning.arenaFloorY;
+    wallH = g_simTuning.arenaWallHeight;
+    rebuildArenaMeshes(floor, wall);
 }
 
 } // namespace
@@ -135,28 +147,23 @@ int main() {
 
     initFrameTimer();
 
-    for (RigidBody& body : g_rigidBodies) {
-        applyBeybladeSphereInertia(body);
-    }
+    syncRigidBodiesFromTuning();
 
     std::vector<Vec3> arenaFloorVerts;
-    arenaFloorVerts.reserve(5000);
-    appendArenaGrid(arenaFloorVerts, kArenaHalfWidth, kArenaHalfHeight, kArenaFloorY, 36);
-    appendArenaBorder(arenaFloorVerts, kArenaHalfWidth, kArenaHalfHeight, kArenaFloorY);
-
     std::vector<Vec3> arenaWallVerts;
-    arenaWallVerts.reserve(3000);
-    appendArenaWallFrame(arenaWallVerts, kArenaHalfWidth, kArenaHalfHeight, kArenaFloorY, kArenaWallHeight);
+    rebuildArenaMeshes(arenaFloorVerts, arenaWallVerts);
 
     bool s_prevZ = false;
     bool s_zDragActive = false;
     Vec3 s_dragStart{};
     Vec3 s_dragCurrent{};
-    float s_launchSpinY = kTopSpinAboutWorldY;
+    float s_launchSpinY = g_simTuning.defaultTopSpinY;
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         debugOverlayNewFrame();
+        syncRigidBodiesFromTuning();
+        rebuildArenaIfDirty(arenaFloorVerts, arenaWallVerts);
         resetStickSlideFrameDebug();
         const float frameDt = computeDeltaTimeSeconds();
         processInput(window, frameDt);
@@ -180,12 +187,13 @@ int main() {
 
         Vec3 floorHit{};
         const bool hasFloorHit = fbw > 0 && fbh > 0
-            && pickPointOnArenaFloor(fbw, fbh, mx, my, cameraPos, g_cameraTarget, kArenaFloorY, floorHit);
+            && pickPointOnArenaFloor(
+                   fbw, fbh, mx, my, cameraPos, g_cameraTarget, g_simTuning.arenaFloorY, floorHit);
 
         if (zDown && !s_prevZ) {
             if (hasFloorHit && pointInsideArenaXZ(floorHit.x, floorHit.z)) {
                 resetLaunchableTopForSlingshot();
-                s_launchSpinY = kTopSpinAboutWorldY;
+                s_launchSpinY = g_simTuning.defaultTopSpinY;
                 s_zDragActive = true;
                 s_dragStart = floorHit;
                 s_dragCurrent = floorHit;
@@ -200,23 +208,24 @@ int main() {
             }
             resetLaunchableTopForSlingshot();
             if (glfwGetKey(window, GLFW_KEY_LEFT_BRACKET) == GLFW_PRESS) {
-                s_launchSpinY -= kLaunchSpinAdjustRate * frameDt;
+                s_launchSpinY -= g_simTuning.launchSpinAdjustRate * frameDt;
             }
             if (glfwGetKey(window, GLFW_KEY_RIGHT_BRACKET) == GLFW_PRESS) {
-                s_launchSpinY += kLaunchSpinAdjustRate * frameDt;
+                s_launchSpinY += g_simTuning.launchSpinAdjustRate * frameDt;
             }
-            s_launchSpinY = std::clamp(s_launchSpinY, -kLaunchSpinYMax, kLaunchSpinYMax);
+            s_launchSpinY = std::clamp(s_launchSpinY, -g_simTuning.launchSpinYMax, g_simTuning.launchSpinYMax);
         }
 
         g_fixedStepAccumulator += frameDt;
 
         int simulatedSteps = 0;
-        while (g_fixedStepAccumulator >= kFixedTimeStepSeconds && simulatedSteps < kMaxFixedStepsPerFrame) {
-            physicsFixedSubstep(kFixedTimeStepSeconds, draggingZLaunch);
-            g_fixedStepAccumulator -= kFixedTimeStepSeconds;
+        while (g_fixedStepAccumulator >= g_simTuning.fixedDt && simulatedSteps < g_simTuning.maxFixedStepsPerFrame) {
+            physicsFixedSubstep(g_simTuning.fixedDt, draggingZLaunch);
+            g_fixedStepAccumulator -= g_simTuning.fixedDt;
             simulatedSteps++;
         }
-        if (simulatedSteps == kMaxFixedStepsPerFrame && g_fixedStepAccumulator >= kFixedTimeStepSeconds) {
+        if (simulatedSteps == g_simTuning.maxFixedStepsPerFrame
+            && g_fixedStepAccumulator >= g_simTuning.fixedDt) {
             g_fixedStepAccumulator = 0.0f;
         }
 
@@ -225,9 +234,9 @@ int main() {
             intent.spinAboutWorldY = s_launchSpinY;
             const Vec3 delta = {s_dragCurrent.x - s_dragStart.x, 0.0f, s_dragCurrent.z - s_dragStart.z};
             const float d = length(delta);
-            if (d > kLaunchDragMin) {
+            if (d > g_simTuning.launchDragMin) {
                 const Vec3 dir = delta * (1.0f / d);
-                const float speed = std::min(d * kLaunchStrength, kMaxLaunchSpeed);
+                const float speed = std::min(d * g_simTuning.launchStrength, g_simTuning.maxLaunchSpeed);
                 intent.horizontalVelocity = {-dir.x * speed, 0.0f, -dir.z * speed};
             }
             applyLaunchIntentFromZSlingshot(launchableTop(), intent);
@@ -278,18 +287,18 @@ int main() {
         if (draggingZLaunch) {
             std::vector<Vec3> dragPreview;
             dragPreview.reserve(4);
-            dragPreview.push_back({s_dragStart.x, kArenaFloorY, s_dragStart.z});
-            dragPreview.push_back({s_dragCurrent.x, kArenaFloorY, s_dragCurrent.z});
+            dragPreview.push_back({s_dragStart.x, g_simTuning.arenaFloorY, s_dragStart.z});
+            dragPreview.push_back({s_dragCurrent.x, g_simTuning.arenaFloorY, s_dragCurrent.z});
             const Vec3 delta = {s_dragCurrent.x - s_dragStart.x, 0.0f, s_dragCurrent.z - s_dragStart.z};
             const float d = length(delta);
             if (d > 1.0e-4f) {
                 const Vec3 dir = delta * (1.0f / d);
                 const Vec3 launchDir = {-dir.x, 0.0f, -dir.z};
                 const float arrowLen = std::min(40.0f + 0.15f * d, 180.0f);
-                const Vec3 arrowStart = {s_dragCurrent.x, kArenaFloorY, s_dragCurrent.z};
+                const Vec3 arrowStart = {s_dragCurrent.x, g_simTuning.arenaFloorY, s_dragCurrent.z};
                 const Vec3 arrowEnd = {
                     arrowStart.x + launchDir.x * arrowLen,
-                    kArenaFloorY,
+                    g_simTuning.arenaFloorY,
                     arrowStart.z + launchDir.z * arrowLen};
                 dragPreview.push_back(arrowStart);
                 dragPreview.push_back(arrowEnd);
@@ -305,6 +314,7 @@ int main() {
             g_fixedStepAccumulator,
             draggingZLaunch,
             s_launchSpinY);
+        debugOverlayDrawTuningPanel();
         debugOverlayRenderDrawData();
 
         glfwSwapBuffers(window);
