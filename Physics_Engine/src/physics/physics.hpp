@@ -11,7 +11,8 @@ constexpr float kArenaWallHeight = 120.0f; // Debug draw only; collision is infi
 constexpr float kTopRadius = 45.0f;
 // Nominal spin rate about world +Y (upright top); slingshot launch does not add tilt or off-axis ω.
 constexpr float kTopSpinAboutWorldY = 14.0f;
-// Player-adjustable launch spin (Z-drag + [ ]), clamped to this range (rad/s).
+// Player-adjustable launch spin (Z-drag + [ ]), signed about world +Y; clamped to ±max (rad/s).
+// Typical magnitude floor when tuning (not enforced by clamp; brackets can cross zero).
 constexpr float kLaunchSpinYMin = 4.0f;
 constexpr float kLaunchSpinYMax = 40.0f;
 constexpr int kCircleSegments = 64;
@@ -47,6 +48,78 @@ constexpr float kSphereSphereFrictionMu = 0.14f;
 constexpr float kFixedTimeStepSeconds = 1.0f / 120.0f;
 constexpr int kMaxFixedStepsPerFrame = 8;
 extern float g_fixedStepAccumulator;
+
+// Per rendered frame: accumulated contact/friction stats for stick vs slide debugging (HUD + optional world draw).
+struct StickSlideFrameDebug {
+    void reset() {
+        *this = StickSlideFrameDebug{};
+    }
+
+    // Sphere–sphere (counts include every Gauss–Seidel iteration per substep).
+    int ssPairInRange = 0;
+    int ssTangentialApplied = 0;
+    int ssVtBelowThreshold = 0;
+    int ssDenomTBad = 0;
+    int ssFrictionSaturated = 0;
+    int ssFrictionNotSaturated = 0;
+
+    bool ssLastValid = false;
+    int ssLastBodyI = 0;
+    int ssLastBodyJ = 0;
+    Vec3 ssLastContact{};
+    Vec3 ssLastN{};
+    Vec3 ssLastT{};
+    float ssLastJn = 0.0f;
+    float ssLastJt = 0.0f;
+    float ssLastJtFree = 0.0f;
+    float ssLastJMax = 0.0f;
+    float ssLastVtLen = 0.0f;
+    float ssLastRestingProxy = 0.0f;
+    bool ssLastSaturated = false;
+
+    // Floor (upward normal).
+    int floorContacts = 0;
+    int floorTangentialApplied = 0;
+    int floorVtSkip = 0;
+    int floorDenomTBad = 0;
+    int floorFrictionSaturated = 0;
+    int floorFrictionNotSaturated = 0;
+
+    bool floorLastValid = false;
+    int floorLastBody = -1;
+    Vec3 floorLastContact{};
+    Vec3 floorLastN{};
+    Vec3 floorLastT{};
+    float floorLastJnApplied = 0.0f;
+    float floorLastJtFree = 0.0f;
+    float floorLastJMax = 0.0f;
+    float floorLastJt = 0.0f;
+    float floorLastVtLen = 0.0f;
+    bool floorLastSaturated = false;
+
+    // Arena walls (vertical normals).
+    int wallContacts = 0;
+    int wallTangentialApplied = 0;
+    int wallVtSkip = 0;
+    int wallDenomTBad = 0;
+    int wallFrictionSaturated = 0;
+    int wallFrictionNotSaturated = 0;
+
+    bool wallLastValid = false;
+    int wallLastBody = -1;
+    Vec3 wallLastContact{};
+    Vec3 wallLastN{};
+    Vec3 wallLastT{};
+    float wallLastJnApplied = 0.0f;
+    float wallLastJtFree = 0.0f;
+    float wallLastJMax = 0.0f;
+    float wallLastJt = 0.0f;
+    float wallLastVtLen = 0.0f;
+    bool wallLastSaturated = false;
+};
+
+extern StickSlideFrameDebug g_stickSlideFrameDebug;
+void resetStickSlideFrameDebug();
 
 struct LaunchIntent {
     // Horizontal velocity after launch (world XZ; y ignored).

@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <iostream>
 #include <vector>
 
@@ -12,6 +11,7 @@
 #include "math/math.hpp"
 #include "physics/physics.hpp"
 #include "render/debug_lines.hpp"
+#include "app/debug_overlay.hpp"
 
 namespace {
 
@@ -118,7 +118,6 @@ int main() {
     }
 
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-    glfwSetScrollCallback(window, mouseScrollCallback);
     int fbw = 0;
     int fbh = 0;
     glfwGetFramebufferSize(window, &fbw, &fbh);
@@ -128,6 +127,8 @@ int main() {
         glfwTerminate();
         return -1;
     }
+
+    initDebugOverlay(window);
 
     glEnable(GL_DEPTH_TEST);
     glLineWidth(1.5f);
@@ -154,9 +155,14 @@ int main() {
     float s_launchSpinY = kTopSpinAboutWorldY;
 
     while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+        debugOverlayNewFrame();
+        resetStickSlideFrameDebug();
         const float frameDt = computeDeltaTimeSeconds();
         processInput(window, frameDt);
-        updateCameraMouseOrbit(window);
+        if (!debugOverlayWantsMouseCapture()) {
+            updateCameraMouseOrbit(window);
+        }
         g_cameraPitch = kIsometricPitchRadians;
 
         glfwGetFramebufferSize(window, &fbw, &fbh);
@@ -199,19 +205,7 @@ int main() {
             if (glfwGetKey(window, GLFW_KEY_RIGHT_BRACKET) == GLFW_PRESS) {
                 s_launchSpinY += kLaunchSpinAdjustRate * frameDt;
             }
-            s_launchSpinY = std::clamp(s_launchSpinY, kLaunchSpinYMin, kLaunchSpinYMax);
-        }
-
-        if (draggingZLaunch) {
-            char title[192];
-            std::snprintf(
-                title,
-                sizeof(title),
-                "Physics Engine 3D — Z drag | spin %.1f rad/s  [ ] adjust",
-                static_cast<double>(s_launchSpinY));
-            glfwSetWindowTitle(window, title);
-        } else {
-            glfwSetWindowTitle(window, "Physics Engine 3D Debug View");
+            s_launchSpinY = std::clamp(s_launchSpinY, -kLaunchSpinYMax, kLaunchSpinYMax);
         }
 
         g_fixedStepAccumulator += frameDt;
@@ -248,6 +242,7 @@ int main() {
         const Mat4 view = mat4LookAt(cameraPos, g_cameraTarget, {0.0f, 1.0f, 0.0f});
         const Mat4 mvp = mat4Multiply(proj, view);
 
+        glViewport(0, 0, fbw, fbh);
         glClearColor(0.05f, 0.06f, 0.08f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -304,10 +299,18 @@ int main() {
 
         drawWorldAxesGizmo(view, fbw, fbh);
 
+        debugOverlayDrawHud(
+            frameDt,
+            simulatedSteps,
+            g_fixedStepAccumulator,
+            draggingZLaunch,
+            s_launchSpinY);
+        debugOverlayRenderDrawData();
+
         glfwSwapBuffers(window);
-        glfwPollEvents();
     }
 
+    shutdownDebugOverlay();
     shutdownDebugLineRenderer();
     glfwTerminate();
     return 0;
