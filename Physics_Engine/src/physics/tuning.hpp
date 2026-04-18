@@ -39,6 +39,10 @@ struct SimulationTuning {
     float linearVerticalAirDragPerSecond = 0.04f;
     // Multiplier on angular damping about the body spin axis (lower = keeps spin longer vs wobble).
     float angularDampingSpinAxisScale = 0.38f;
+    // Extra decay on ω perpendicular to body spin axis (tumble); 0 = off.
+    float angularTumbleDampingPerSecond = 0.20f;
+    // Extra tumble decay when lowest collider is near the floor (tip-down recovery); 0 = off.
+    float groundedTumbleDampingPerSecond = 0.14f;
 
     // A: X key random match — equal closing speed, random spins.
     float matchInitialClosingSpeed = 340.0f;
@@ -57,6 +61,9 @@ struct SimulationTuning {
     float sphereSphereSeekAccel = 12.0f;
     // Scales normal + tangential + seek impulses (1 = full). <1 tames multi-contact blow-ups.
     float sphereSphereImpulseResponseScale = 0.88f;
+    // If true, collision impulses only change angular velocity along world +Y (spin in the horizontal plane).
+    // Linear velocity from contacts is unchanged (tops can still pop upward).
+    bool collisionAngularDeltaWorldYOnly = true;
 
     // E: stability / camera — applied each substep after integration (0 = no cap).
     float maxLinearSpeed = 780.0f;
@@ -64,17 +71,23 @@ struct SimulationTuning {
     // Extra cap on upward Y only (after tip/attack hits); 0 = unused.
     float maxUpwardLinearSpeed = 280.0f;
 
+    // Grounded: lowest collider sphere bottom within this of arenaFloorY counts as on floor.
+    float floorContactMargin = 24.0f;
+
     // F: gyro upright — torque aligns body +Y with world +Y; fades out when spin about axis drops.
     float gyroUprightStrength = 420.0f;
     float gyroUprightSpinDead = 3.5f;
     float gyroUprightSpinFull = 24.0f;
     float gyroUprightMaxTorque = 5600.0f;
+    // Multiplies upright torque when grounded (1 = no boost).
+    float gyroFloorBoost = 1.55f;
 
     // H: battle band — XZ pull between both tops while each still has spin; 0 max impulse = off.
     float battleBandMaxImpulsePerStep = 110.0f;
     float battleBandRestDistance = 125.0f;
     float battleBandStiffness = 52.0f;
     float battleBandMinSpinAboutAxis = 4.5f;
+    bool battleBandRequireFloorContact = true;
 
     float body0Mass = 1.0f;
     float body1Mass = 1.0f;

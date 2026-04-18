@@ -142,16 +142,43 @@ void resetSimulationTuningToDefaults() {
     g_simTuning = SimulationTuning{};
 }
 
+static float rigidBodyLowestColliderBottomY(const RigidBody& body) {
+    float minY = 1.0e30f;
+    for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+        const CollisionSphere& s = body.collisionSpheres[i];
+        const Vec3 wc = body.position + quatRotateVector(body.orientation, s.offsetBody);
+        minY = std::min(minY, wc.y - s.radius);
+    }
+    return minY;
+}
+
+static bool rigidBodyContactsFloor(const RigidBody& body, float floorY, float margin) {
+    if (body.collisionSphereCount == 0) {
+        return body.position.y - body.radius <= floorY + margin;
+    }
+    return rigidBodyLowestColliderBottomY(body) <= floorY + margin;
+}
+
+static void applyCollisionAngularDelta(RigidBody& body, const Vec3& deltaW) {
+    if (g_simTuning.collisionAngularDeltaWorldYOnly) {
+        body.angularVelocity.y += deltaW.y;
+    } else {
+        body.angularVelocity = body.angularVelocity + deltaW;
+    }
+}
+
 static void applyAirAndAngularDamping(RigidBody& body, float dt) {
     const float ad = g_simTuning.angularDampingPerSecond;
-    if (ad > 0.0f) {
-        Vec3 spinAxis = quatRotateVector(body.orientation, Vec3{0.0f, 1.0f, 0.0f});
-        const float axisLen = length(spinAxis);
-        if (axisLen < 1.0e-5f) {
+    Vec3 spinAxis = quatRotateVector(body.orientation, Vec3{0.0f, 1.0f, 0.0f});
+    const float axisLen = length(spinAxis);
+    if (axisLen < 1.0e-5f) {
+        if (ad > 0.0f) {
             const float s = std::max(0.0f, 1.0f - ad * dt);
             body.angularVelocity = body.angularVelocity * s;
-        } else {
-            spinAxis = spinAxis * (1.0f / axisLen);
+        }
+    } else {
+        spinAxis = spinAxis * (1.0f / axisLen);
+        if (ad > 0.0f) {
             const float yScale = std::clamp(g_simTuning.angularDampingSpinAxisScale, 0.0f, 2.0f);
             const Vec3 w = body.angularVelocity;
             const float wAlong = dot(w, spinAxis);
@@ -159,6 +186,25 @@ static void applyAirAndAngularDamping(RigidBody& body, float dt) {
             const float sPerp = std::max(0.0f, 1.0f - ad * dt);
             const float sAlong = std::max(0.0f, 1.0f - ad * yScale * dt);
             body.angularVelocity = spinAxis * (wAlong * sAlong) + wPerp * sPerp;
+        }
+
+        const float tumble = g_simTuning.angularTumbleDampingPerSecond;
+        if (tumble > 0.0f) {
+            Vec3 w2 = body.angularVelocity;
+            const float along2 = dot(w2, spinAxis);
+            const Vec3 perp2 = w2 - spinAxis * along2;
+            const float st = std::max(0.0f, 1.0f - tumble * dt);
+            body.angularVelocity = spinAxis * along2 + perp2 * st;
+        }
+        const float gTumble = g_simTuning.groundedTumbleDampingPerSecond;
+        if (gTumble > 0.0f
+            && rigidBodyContactsFloor(
+                body, g_simTuning.arenaFloorY, g_simTuning.floorContactMargin)) {
+            Vec3 w3 = body.angularVelocity;
+            const float along3 = dot(w3, spinAxis);
+            const Vec3 perp3 = w3 - spinAxis * along3;
+            const float sg = std::max(0.0f, 1.0f - gTumble * dt);
+            body.angularVelocity = spinAxis * along3 + perp3 * sg;
         }
     }
     const float ld = g_simTuning.linearAirDragPerSecond;
@@ -296,8 +342,9 @@ static void resolveContactImpulses(
     ContactSurfaceKind surfaceKind) {
     auto applyImpulse = [&](const Vec3& impulse) {
         body.linearVelocity = body.linearVelocity + impulse * (1.0f / body.mass);
-        body.angularVelocity =
-            body.angularVelocity + applyInvInertiaWorld(body.orientation, cross(r, impulse), body.invInertiaBody);
+        const Vec3 deltaW =
+            applyInvInertiaWorld(body.orientation, cross(r, impulse), body.invInertiaBody);
+        applyCollisionAngularDelta(body, deltaW);
     };
 
     const Vec3 contactPoint = body.position + r;
@@ -595,8 +642,9 @@ static void resolveArenaWallsCompound(RigidBody& body, int bodyIndex, float half
 
 static void applyImpulseAtContact(RigidBody& body, const Vec3& r, const Vec3& impulse) {
     body.linearVelocity = body.linearVelocity + impulse * (1.0f / body.mass);
-    body.angularVelocity =
-        body.angularVelocity + applyInvInertiaWorld(body.orientation, cross(r, impulse), body.invInertiaBody);
+    const Vec3 deltaW =
+        applyInvInertiaWorld(body.orientation, cross(r, impulse), body.invInertiaBody);
+    applyCollisionAngularDelta(body, deltaW);
 }
 
 static void applyGyroUprightAssist(RigidBody& body, float dt) {
@@ -629,6 +677,10 @@ static void applyGyroUprightAssist(RigidBody& body, float dt) {
     }
     torqueAxis = torqueAxis * (1.0f / sinA);
     float torqueMag = str * gate * sinA;
+    if (rigidBodyContactsFloor(body, g_simTuning.arenaFloorY, g_simTuning.floorContactMargin)) {
+        const float boost = std::clamp(g_simTuning.gyroFloorBoost, 0.0f, 3.0f);
+        torqueMag *= boost;
+    }
     if (g_simTuning.gyroUprightMaxTorque > 0.0f) {
         torqueMag = std::min(torqueMag, g_simTuning.gyroUprightMaxTorque);
     }
@@ -666,6 +718,14 @@ static void applyBattleBand(float dt, bool skipLaunchableBody) {
 
     if (std::min(spinAboutAxis(a), spinAboutAxis(b)) < minSpin) {
         return;
+    }
+
+    if (g_simTuning.battleBandRequireFloorContact) {
+        const float floorY = g_simTuning.arenaFloorY;
+        const float margin = std::max(0.0f, g_simTuning.floorContactMargin);
+        if (!rigidBodyContactsFloor(a, floorY, margin) || !rigidBodyContactsFloor(b, floorY, margin)) {
+            return;
+        }
     }
 
     Vec3 rab = b.position - a.position;

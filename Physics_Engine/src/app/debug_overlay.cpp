@@ -136,6 +136,9 @@ void debugOverlayDrawTuningPanel() {
     ImGui::DragFloat("SS slip norm cap", &g_simTuning.sphereSphereSlipBoostMax, 0.1f, 0.5f, 8.0f);
     ImGui::DragFloat("SS seek accel", &g_simTuning.sphereSphereSeekAccel, 0.5f, 0.0f, 80.0f);
     ImGui::DragFloat("SS impulse scale", &g_simTuning.sphereSphereImpulseResponseScale, 0.02f, 0.2f, 1.5f);
+    ImGui::Checkbox("Contact delta omega world-Y only", &g_simTuning.collisionAngularDeltaWorldYOnly);
+
+    ImGui::TextUnformatted("(Collision spin change only on vertical axis; linear launch unchanged.)");
     ImGui::TextUnformatted("Caps (0 = off):");
     ImGui::DragFloat("Max |v|", &g_simTuning.maxLinearSpeed, 10.0f, 0.0f, 4000.0f);
     ImGui::DragFloat("Max |omega|", &g_simTuning.maxAngularSpeed, 2.0f, 0.0f, 800.0f);
@@ -205,6 +208,9 @@ void debugOverlayDrawTuningPanel() {
     ImGui::DragFloat("Angular damping (/s)", &g_simTuning.angularDampingPerSecond, 0.02f, 0.0f, 5.0f);
     ImGui::DragFloat("Spin-axis damp scale", &g_simTuning.angularDampingSpinAxisScale, 0.02f, 0.0f, 2.0f);
     ImGui::TextUnformatted("(Lower = spin about body axis decays slower than wobble.)");
+    ImGui::DragFloat("Tumble damp (/s)", &g_simTuning.angularTumbleDampingPerSecond, 0.02f, 0.0f, 3.0f);
+    ImGui::DragFloat("Grounded tumble damp (/s)", &g_simTuning.groundedTumbleDampingPerSecond, 0.02f, 0.0f, 3.0f);
+    ImGui::DragFloat("Floor contact margin", &g_simTuning.floorContactMargin, 0.5f, 0.0f, 80.0f);
     ImGui::DragFloat("Linear drag XZ (/s)", &g_simTuning.linearAirDragPerSecond, 0.02f, 0.0f, 3.0f);
     ImGui::DragFloat("Linear drag Y (/s)", &g_simTuning.linearVerticalAirDragPerSecond, 0.02f, 0.0f, 3.0f);
 
@@ -213,10 +219,12 @@ void debugOverlayDrawTuningPanel() {
     ImGui::DragFloat("Gyro spin dead", &g_simTuning.gyroUprightSpinDead, 0.1f, 0.0f, 40.0f);
     ImGui::DragFloat("Gyro spin full gate", &g_simTuning.gyroUprightSpinFull, 0.25f, 0.5f, 80.0f);
     ImGui::DragFloat("Gyro max torque", &g_simTuning.gyroUprightMaxTorque, 20.0f, 0.0f, 50000.0f);
+    ImGui::DragFloat("Gyro floor boost", &g_simTuning.gyroFloorBoost, 0.05f, 0.0f, 3.0f);
     ImGui::DragFloat("Band max impulse / step", &g_simTuning.battleBandMaxImpulsePerStep, 1.0f, 0.0f, 500.0f);
     ImGui::DragFloat("Band rest XZ dist", &g_simTuning.battleBandRestDistance, 1.0f, 0.0f, 400.0f);
     ImGui::DragFloat("Band stiffness", &g_simTuning.battleBandStiffness, 0.5f, 0.0f, 400.0f);
     ImGui::DragFloat("Band min spin (axis)", &g_simTuning.battleBandMinSpinAboutAxis, 0.1f, 0.0f, 40.0f);
+    ImGui::Checkbox("Band needs floor contact", &g_simTuning.battleBandRequireFloorContact);
 
     ImGui::SeparatorText("X random match");
     ImGui::DragFloat("Closing speed", &g_simTuning.matchInitialClosingSpeed, 5.0f, 20.0f, 800.0f);
