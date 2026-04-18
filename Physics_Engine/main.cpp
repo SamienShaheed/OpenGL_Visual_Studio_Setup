@@ -72,7 +72,7 @@ bool pointInsideArenaXZ(float x, float z) {
 
 void resetLaunchableTopForSlingshot() {
     RigidBody& b = launchableTop();
-    b.position = {0.0f, b.radius, 0.0f};
+    b.position = {0.0f, g_simTuning.arenaFloorY + b.colliderBoundingRadius, 0.0f};
     b.linearVelocity = {0.0f, 0.0f, 0.0f};
     b.angularVelocity = {0.0f, 0.0f, 0.0f};
     b.orientation = {1.0f, 0.0f, 0.0f, 0.0f};
@@ -273,20 +273,65 @@ int main() {
             const RigidBody& body = g_rigidBodies[bi];
             const bool isLaunchable = (bi == kLaunchableBodyIndex);
             const Vec3 ringRgb = isLaunchable ? Vec3{1.0f, 0.9f, 0.25f} : Vec3{0.45f, 0.92f, 1.0f};
+            const Vec3 tipRgb = isLaunchable ? Vec3{1.0f, 0.62f, 0.12f} : Vec3{0.55f, 0.88f, 1.0f};
+            const Vec3 diskRgb = isLaunchable ? Vec3{0.98f, 0.95f, 0.4f} : Vec3{0.5f, 0.82f, 1.0f};
+            const Vec3 attackRgb = isLaunchable ? Vec3{1.0f, 0.45f, 0.15f} : Vec3{0.35f, 0.72f, 1.0f};
+            const Vec3 diskOutlineRgb = isLaunchable ? Vec3{0.72f, 0.68f, 0.28f} : Vec3{0.32f, 0.58f, 0.82f};
+            constexpr int kWireSphereSegments = 48;
 
-            std::vector<Vec3> marker;
-            marker.reserve(kCircleSegments);
-            appendCircleXZAtY(
-                marker, body.position.x, body.position.y, body.position.z, body.radius, kCircleSegments);
-            drawLineBatch(marker, GL_LINE_LOOP, ringRgb, mvp);
+            const float diskY =
+                (bi == 0) ? g_simTuning.body0DiskRingY : g_simTuning.body1DiskRingY;
+            const float diskRadial =
+                (bi == 0) ? g_simTuning.body0DiskRadial : g_simTuning.body1DiskRadial;
+            if (diskRadial > 0.5f) {
+                drawCircleBodyXZPlane(
+                    body.position, body.orientation, diskY, diskRadial, kCircleSegments, diskOutlineRgb, mvp);
+            }
+
+            for (int si = 0; si < static_cast<int>(body.collisionSphereCount); ++si) {
+                const CollisionSphere& sp = body.collisionSpheres[si];
+                const Vec3 wc =
+                    body.position + quatRotateVector(body.orientation, sp.offsetBody);
+                Vec3 rgb = ringRgb;
+                switch (sp.role) {
+                case CollisionSphereRole::Tip:
+                    rgb = tipRgb;
+                    break;
+                case CollisionSphereRole::Hub:
+                    rgb = ringRgb;
+                    break;
+                case CollisionSphereRole::DiskRing:
+                    rgb = diskRgb;
+                    break;
+                case CollisionSphereRole::MidAttack:
+                    rgb = attackRgb;
+                    break;
+                default:
+                    rgb = ringRgb;
+                    break;
+                }
+                drawWireframeSphereWorldAxes(wc, sp.radius, kWireSphereSegments, rgb, mvp);
+
+                const bool strutToCom = (sp.role != CollisionSphereRole::Hub)
+                    && (length(sp.offsetBody) > 1.0e-4f);
+                if (strutToCom) {
+                    const Vec3 strutRgb = {
+                        rgb.x * 0.38f,
+                        rgb.y * 0.38f,
+                        rgb.z * 0.38f,
+                    };
+                    const std::vector<Vec3> strut = {body.position, wc};
+                    drawLineBatch(strut, GL_LINES, strutRgb, mvp);
+                }
+            }
 
             const Vec3 markerCenter = body.position;
-            drawVelocityGuides(markerCenter, body.linearVelocity, body.radius, mvp);
+            drawVelocityGuides(markerCenter, body.linearVelocity, body.colliderBoundingRadius, mvp);
 
             const Vec3 localX = quatRotateVector(body.orientation, {1.0f, 0.0f, 0.0f});
             const Vec3 localY = quatRotateVector(body.orientation, {0.0f, 1.0f, 0.0f});
             const Vec3 localZ = quatRotateVector(body.orientation, {0.0f, 0.0f, 1.0f});
-            const float axisLen = body.radius * 1.8f;
+            const float axisLen = body.colliderBoundingRadius * 1.8f;
             std::vector<Vec3> topAxisX = {markerCenter, markerCenter + localX * axisLen};
             std::vector<Vec3> topAxisY = {markerCenter, markerCenter + localY * axisLen};
             std::vector<Vec3> topAxisZ = {markerCenter, markerCenter + localZ * axisLen};

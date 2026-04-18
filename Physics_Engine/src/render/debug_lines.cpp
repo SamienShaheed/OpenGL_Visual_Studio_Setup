@@ -1,5 +1,7 @@
 #include "render/debug_lines.hpp"
 
+#include "math/math.hpp"
+
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
@@ -116,6 +118,58 @@ void appendCircleXZAtY(std::vector<Vec3>& outVerts, float cx, float cy, float cz
         const float t = (static_cast<float>(i) / static_cast<float>(segments)) * 6.283185307f;
         outVerts.push_back({cx + std::cos(t) * radius, cy, cz + std::sin(t) * radius});
     }
+}
+
+void drawCircleBodyXZPlane(
+    const Vec3& comWorld,
+    const Quaternion& bodyOrientation,
+    float yBody,
+    float ringRadius,
+    int segments,
+    const Vec3& color,
+    const Mat4& mvp) {
+    if (ringRadius <= 0.0f || segments < 3) {
+        return;
+    }
+    const Vec3 c = comWorld + quatRotateVector(bodyOrientation, {0.0f, yBody, 0.0f});
+    const Vec3 bx = quatRotateVector(bodyOrientation, {1.0f, 0.0f, 0.0f});
+    const Vec3 bz = quatRotateVector(bodyOrientation, {0.0f, 0.0f, 1.0f});
+    const float kTwoPi = 6.283185307f;
+    std::vector<Vec3> loop;
+    loop.reserve(static_cast<std::size_t>(segments));
+    for (int i = 0; i < segments; ++i) {
+        const float t = (static_cast<float>(i) / static_cast<float>(segments)) * kTwoPi;
+        loop.push_back(c + bx * (std::cos(t) * ringRadius) + bz * (std::sin(t) * ringRadius));
+    }
+    drawLineBatch(loop, GL_LINE_LOOP, color, mvp);
+}
+
+void drawWireframeSphereWorldAxes(const Vec3& c, float radius, int segments, const Vec3& color, const Mat4& mvp) {
+    if (radius <= 0.0f || segments < 3) {
+        return;
+    }
+    const float kTwoPi = 6.283185307f;
+
+    std::vector<Vec3> xz;
+    xz.reserve(static_cast<std::size_t>(segments));
+    appendCircleXZAtY(xz, c.x, c.y, c.z, radius, segments);
+    drawLineBatch(xz, GL_LINE_LOOP, color, mvp);
+
+    std::vector<Vec3> xy;
+    xy.reserve(static_cast<std::size_t>(segments));
+    for (int i = 0; i < segments; ++i) {
+        const float t = (static_cast<float>(i) / static_cast<float>(segments)) * kTwoPi;
+        xy.push_back({c.x + std::cos(t) * radius, c.y + std::sin(t) * radius, c.z});
+    }
+    drawLineBatch(xy, GL_LINE_LOOP, color, mvp);
+
+    std::vector<Vec3> yz;
+    yz.reserve(static_cast<std::size_t>(segments));
+    for (int i = 0; i < segments; ++i) {
+        const float t = (static_cast<float>(i) / static_cast<float>(segments)) * kTwoPi;
+        yz.push_back({c.x, c.y + std::cos(t) * radius, c.z + std::sin(t) * radius});
+    }
+    drawLineBatch(yz, GL_LINE_LOOP, color, mvp);
 }
 
 void appendArenaGrid(std::vector<Vec3>& outVerts, float halfW, float halfD, float y, int divisions) {

@@ -34,9 +34,11 @@ struct SimulationTuning {
     int sphereSphereIterations = 6;
 
     // B: spin / translation decay (per second; 0 = off).
-    float angularDampingPerSecond = 0.15f;
+    float angularDampingPerSecond = 0.10f;
     float linearAirDragPerSecond = 0.04f;
     float linearVerticalAirDragPerSecond = 0.04f;
+    // Multiplier on angular damping about the body spin axis (lower = keeps spin longer vs wobble).
+    float angularDampingSpinAxisScale = 0.38f;
 
     // A: X key random match — equal closing speed, random spins.
     float matchInitialClosingSpeed = 340.0f;
@@ -53,11 +55,58 @@ struct SimulationTuning {
     float sphereSphereSlipBoost = 0.45f;
     float sphereSphereSlipBoostMax = 2.5f;
     float sphereSphereSeekAccel = 12.0f;
+    // Scales normal + tangential + seek impulses (1 = full). <1 tames multi-contact blow-ups.
+    float sphereSphereImpulseResponseScale = 0.88f;
+
+    // E: stability / camera — applied each substep after integration (0 = no cap).
+    float maxLinearSpeed = 780.0f;
+    float maxAngularSpeed = 125.0f;
+    // Extra cap on upward Y only (after tip/attack hits); 0 = unused.
+    float maxUpwardLinearSpeed = 280.0f;
+
+    // F: gyro upright — torque aligns body +Y with world +Y; fades out when spin about axis drops.
+    float gyroUprightStrength = 420.0f;
+    float gyroUprightSpinDead = 3.5f;
+    float gyroUprightSpinFull = 24.0f;
+    float gyroUprightMaxTorque = 5600.0f;
+
+    // H: battle band — XZ pull between both tops while each still has spin; 0 max impulse = off.
+    float battleBandMaxImpulsePerStep = 110.0f;
+    float battleBandRestDistance = 125.0f;
+    float battleBandStiffness = 52.0f;
+    float battleBandMinSpinAboutAxis = 4.5f;
 
     float body0Mass = 1.0f;
     float body1Mass = 1.0f;
     float body0Radius = 45.0f;
     float body1Radius = 45.0f;
+
+    // D: Beyblade-style compound (sphere soup). Body +Y is the spin axis. Tip below COM; flat disk ring above COM.
+    float body0TipRadius = 9.0f;
+    float body0TipOffsetBelowCom = 40.0f;
+    float body0HubColliderRadius = 20.0f;
+    bool body0UseHubCollider = true;
+    float body0DiskRingY = 22.0f;
+    float body0DiskRadial = 38.0f;
+    float body0DiskSphereRadius = 11.0f;
+    int body0DiskSphereCount = 6;
+    int body0MidAttackCount = 0;
+    float body0MidAttackRadius = 12.0f;
+    float body0MidAttackRadial = 34.0f;
+    float body0MidAttackY = 2.0f;
+
+    float body1TipRadius = 8.0f;
+    float body1TipOffsetBelowCom = 38.0f;
+    float body1HubColliderRadius = 18.0f;
+    bool body1UseHubCollider = true;
+    float body1DiskRingY = 20.0f;
+    float body1DiskRadial = 36.0f;
+    float body1DiskSphereRadius = 10.0f;
+    int body1DiskSphereCount = 6;
+    int body1MidAttackCount = 0;
+    float body1MidAttackRadius = 11.0f;
+    float body1MidAttackRadial = 33.0f;
+    float body1MidAttackY = 2.0f;
 };
 
 extern SimulationTuning g_simTuning;

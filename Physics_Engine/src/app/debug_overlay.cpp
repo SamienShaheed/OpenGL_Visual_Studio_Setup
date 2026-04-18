@@ -135,6 +135,11 @@ void debugOverlayDrawTuningPanel() {
     ImGui::SliderFloat("SS slip boost", &g_simTuning.sphereSphereSlipBoost, 0.0f, 2.0f);
     ImGui::DragFloat("SS slip norm cap", &g_simTuning.sphereSphereSlipBoostMax, 0.1f, 0.5f, 8.0f);
     ImGui::DragFloat("SS seek accel", &g_simTuning.sphereSphereSeekAccel, 0.5f, 0.0f, 80.0f);
+    ImGui::DragFloat("SS impulse scale", &g_simTuning.sphereSphereImpulseResponseScale, 0.02f, 0.2f, 1.5f);
+    ImGui::TextUnformatted("Caps (0 = off):");
+    ImGui::DragFloat("Max |v|", &g_simTuning.maxLinearSpeed, 10.0f, 0.0f, 4000.0f);
+    ImGui::DragFloat("Max |omega|", &g_simTuning.maxAngularSpeed, 2.0f, 0.0f, 800.0f);
+    ImGui::DragFloat("Max upward vy", &g_simTuning.maxUpwardLinearSpeed, 5.0f, 0.0f, 2000.0f);
 
     ImGui::SeparatorText("Arena");
     ImGui::DragFloat("Half width (X)", &g_simTuning.arenaHalfWidth, 1.0f, 50.0f, 2000.0f);
@@ -163,14 +168,55 @@ void debugOverlayDrawTuningPanel() {
     ImGui::DragFloat("Body 0 radius", &g_simTuning.body0Radius, 0.5f, 1.0f, 300.0f);
     ImGui::DragFloat("Body 1 radius", &g_simTuning.body1Radius, 0.5f, 1.0f, 300.0f);
 
+    ImGui::SeparatorText("Beyblade compound (tip + hub + disk ring)");
+    ImGui::TextUnformatted("+Y = spin axis. Tip below COM; disk ring above COM (sphere approximation).");
+    ImGui::SeparatorText("Body 0 shape");
+    ImGui::DragFloat("Tip radius", &g_simTuning.body0TipRadius, 0.25f, 0.0f, 80.0f);
+    ImGui::DragFloat("Tip below COM", &g_simTuning.body0TipOffsetBelowCom, 0.5f, 0.0f, 120.0f);
+    ImGui::Checkbox("Use hub sphere", &g_simTuning.body0UseHubCollider);
+    ImGui::DragFloat("Hub radius", &g_simTuning.body0HubColliderRadius, 0.5f, 1.0f, 120.0f);
+    ImGui::DragFloat("Disk ring Y", &g_simTuning.body0DiskRingY, 0.5f, -40.0f, 120.0f);
+    ImGui::DragFloat("Disk radial", &g_simTuning.body0DiskRadial, 0.5f, 0.0f, 200.0f);
+    ImGui::DragFloat("Disk sphere R", &g_simTuning.body0DiskSphereRadius, 0.25f, 2.0f, 80.0f);
+    ImGui::DragInt("Disk sphere count", &g_simTuning.body0DiskSphereCount, 1, 0, 12);
+    ImGui::DragInt("Mid attack count", &g_simTuning.body0MidAttackCount, 1, 0, 8);
+    ImGui::DragFloat("Mid attack R", &g_simTuning.body0MidAttackRadius, 0.25f, 2.0f, 80.0f);
+    ImGui::DragFloat("Mid attack radial", &g_simTuning.body0MidAttackRadial, 0.5f, 0.0f, 200.0f);
+    ImGui::DragFloat("Mid attack Y", &g_simTuning.body0MidAttackY, 0.5f, -60.0f, 80.0f);
+    ImGui::SeparatorText("Body 1 shape");
+    ImGui::DragFloat("B1 tip radius", &g_simTuning.body1TipRadius, 0.25f, 0.0f, 80.0f);
+    ImGui::DragFloat("B1 tip below COM", &g_simTuning.body1TipOffsetBelowCom, 0.5f, 0.0f, 120.0f);
+    ImGui::Checkbox("B1 use hub sphere", &g_simTuning.body1UseHubCollider);
+    ImGui::DragFloat("B1 hub radius", &g_simTuning.body1HubColliderRadius, 0.5f, 1.0f, 120.0f);
+    ImGui::DragFloat("B1 disk ring Y", &g_simTuning.body1DiskRingY, 0.5f, -40.0f, 120.0f);
+    ImGui::DragFloat("B1 disk radial", &g_simTuning.body1DiskRadial, 0.5f, 0.0f, 200.0f);
+    ImGui::DragFloat("B1 disk sphere R", &g_simTuning.body1DiskSphereRadius, 0.25f, 2.0f, 80.0f);
+    ImGui::DragInt("B1 disk sphere count", &g_simTuning.body1DiskSphereCount, 1, 0, 12);
+    ImGui::DragInt("B1 mid attack count", &g_simTuning.body1MidAttackCount, 1, 0, 8);
+    ImGui::DragFloat("B1 mid attack R", &g_simTuning.body1MidAttackRadius, 0.25f, 2.0f, 80.0f);
+    ImGui::DragFloat("B1 mid attack radial", &g_simTuning.body1MidAttackRadial, 0.5f, 0.0f, 200.0f);
+    ImGui::DragFloat("B1 mid attack Y", &g_simTuning.body1MidAttackY, 0.5f, -60.0f, 80.0f);
+
     ImGui::SeparatorText("Inertia (sphere model)");
     ImGui::DragFloat("Spin factor", &g_simTuning.inertiaSpinFactor, 0.01f, 0.05f, 1.0f);
     ImGui::DragFloat("Trans factor", &g_simTuning.inertiaTransFactor, 0.01f, 0.05f, 1.0f);
 
     ImGui::SeparatorText("Damping / drag");
     ImGui::DragFloat("Angular damping (/s)", &g_simTuning.angularDampingPerSecond, 0.02f, 0.0f, 5.0f);
+    ImGui::DragFloat("Spin-axis damp scale", &g_simTuning.angularDampingSpinAxisScale, 0.02f, 0.0f, 2.0f);
+    ImGui::TextUnformatted("(Lower = spin about body axis decays slower than wobble.)");
     ImGui::DragFloat("Linear drag XZ (/s)", &g_simTuning.linearAirDragPerSecond, 0.02f, 0.0f, 3.0f);
     ImGui::DragFloat("Linear drag Y (/s)", &g_simTuning.linearVerticalAirDragPerSecond, 0.02f, 0.0f, 3.0f);
+
+    ImGui::SeparatorText("Gyro upright + battle band");
+    ImGui::DragFloat("Gyro strength", &g_simTuning.gyroUprightStrength, 5.0f, 0.0f, 20000.0f);
+    ImGui::DragFloat("Gyro spin dead", &g_simTuning.gyroUprightSpinDead, 0.1f, 0.0f, 40.0f);
+    ImGui::DragFloat("Gyro spin full gate", &g_simTuning.gyroUprightSpinFull, 0.25f, 0.5f, 80.0f);
+    ImGui::DragFloat("Gyro max torque", &g_simTuning.gyroUprightMaxTorque, 20.0f, 0.0f, 50000.0f);
+    ImGui::DragFloat("Band max impulse / step", &g_simTuning.battleBandMaxImpulsePerStep, 1.0f, 0.0f, 500.0f);
+    ImGui::DragFloat("Band rest XZ dist", &g_simTuning.battleBandRestDistance, 1.0f, 0.0f, 400.0f);
+    ImGui::DragFloat("Band stiffness", &g_simTuning.battleBandStiffness, 0.5f, 0.0f, 400.0f);
+    ImGui::DragFloat("Band min spin (axis)", &g_simTuning.battleBandMinSpinAboutAxis, 0.1f, 0.0f, 40.0f);
 
     ImGui::SeparatorText("X random match");
     ImGui::DragFloat("Closing speed", &g_simTuning.matchInitialClosingSpeed, 5.0f, 20.0f, 800.0f);

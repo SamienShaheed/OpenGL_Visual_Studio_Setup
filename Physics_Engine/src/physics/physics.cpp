@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <random>
 #include <vector>
 
@@ -54,6 +55,75 @@ void recomputeBeybladeInertia(RigidBody& body) {
     };
 }
 
+void rebuildRigidBodyCompoundColliders(RigidBody& body, bool isBody0) {
+    body.collisionSphereCount = 0;
+    auto push = [&](const Vec3& o, float r, CollisionSphereRole role) {
+        if (r <= 0.0f || body.collisionSphereCount >= kMaxCollisionSpheresPerBody) {
+            return;
+        }
+        body.collisionSpheres[body.collisionSphereCount++] = {o, r, role};
+    };
+
+    const float tipR = isBody0 ? g_simTuning.body0TipRadius : g_simTuning.body1TipRadius;
+    const float tipDown =
+        std::max(0.0f, isBody0 ? g_simTuning.body0TipOffsetBelowCom : g_simTuning.body1TipOffsetBelowCom);
+    const float hubR = isBody0 ? g_simTuning.body0HubColliderRadius : g_simTuning.body1HubColliderRadius;
+    const bool useHub = isBody0 ? g_simTuning.body0UseHubCollider : g_simTuning.body1UseHubCollider;
+    const float diskY = isBody0 ? g_simTuning.body0DiskRingY : g_simTuning.body1DiskRingY;
+    const float diskRadial =
+        std::max(0.0f, isBody0 ? g_simTuning.body0DiskRadial : g_simTuning.body1DiskRadial);
+    const float diskSR =
+        std::max(0.5f, isBody0 ? g_simTuning.body0DiskSphereRadius : g_simTuning.body1DiskSphereRadius);
+    int diskCount = isBody0 ? g_simTuning.body0DiskSphereCount : g_simTuning.body1DiskSphereCount;
+    diskCount = std::clamp(diskCount, 0, kMaxCollisionSpheresPerBody);
+
+    int midCount = isBody0 ? g_simTuning.body0MidAttackCount : g_simTuning.body1MidAttackCount;
+    midCount = std::clamp(midCount, 0, kMaxCollisionSpheresPerBody);
+    const float midR =
+        std::max(0.5f, isBody0 ? g_simTuning.body0MidAttackRadius : g_simTuning.body1MidAttackRadius);
+    const float midRadial =
+        std::max(0.0f, isBody0 ? g_simTuning.body0MidAttackRadial : g_simTuning.body1MidAttackRadial);
+    const float midY = isBody0 ? g_simTuning.body0MidAttackY : g_simTuning.body1MidAttackY;
+
+    constexpr float kPi = 3.14159265f;
+
+    if (tipR > 0.0f) {
+        push({0.0f, -tipDown, 0.0f}, tipR, CollisionSphereRole::Tip);
+    }
+    if (useHub && hubR > 0.0f) {
+        push({0.0f, 0.0f, 0.0f}, hubR, CollisionSphereRole::Hub);
+    }
+    if (body.collisionSphereCount == 0) {
+        push({0.0f, 0.0f, 0.0f}, std::max(body.radius, 4.0f), CollisionSphereRole::Hub);
+    }
+
+    int slots = kMaxCollisionSpheresPerBody - static_cast<int>(body.collisionSphereCount);
+    const int diskN = std::min(diskCount, std::max(0, slots));
+    for (int k = 0; k < diskN; ++k) {
+        const float ang = (diskN > 0) ? (2.0f * kPi * static_cast<float>(k) / static_cast<float>(diskN)) : 0.0f;
+        const float x = std::cos(ang) * diskRadial;
+        const float z = std::sin(ang) * diskRadial;
+        push({x, diskY, z}, diskSR, CollisionSphereRole::DiskRing);
+    }
+
+    slots = kMaxCollisionSpheresPerBody - static_cast<int>(body.collisionSphereCount);
+    const int midN = std::min(midCount, std::max(0, slots));
+    for (int k = 0; k < midN; ++k) {
+        const float ang = (midN > 0) ? (2.0f * kPi * static_cast<float>(k) / static_cast<float>(midN)) : 0.0f;
+        const float x = std::cos(ang) * midRadial;
+        const float z = std::sin(ang) * midRadial;
+        push({x, midY, z}, midR, CollisionSphereRole::MidAttack);
+    }
+
+    float br = 0.0f;
+    for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+        const CollisionSphere& s = body.collisionSpheres[i];
+        const float ext = length(s.offsetBody) + s.radius;
+        br = std::max(br, ext);
+    }
+    body.colliderBoundingRadius = std::max(br, body.radius * 0.25f);
+}
+
 void syncRigidBodiesFromTuning() {
     if (g_rigidBodies.size() < 2) {
         return;
@@ -64,6 +134,8 @@ void syncRigidBodiesFromTuning() {
     g_rigidBodies[1].radius = g_simTuning.body1Radius;
     recomputeBeybladeInertia(g_rigidBodies[0]);
     recomputeBeybladeInertia(g_rigidBodies[1]);
+    rebuildRigidBodyCompoundColliders(g_rigidBodies[0], true);
+    rebuildRigidBodyCompoundColliders(g_rigidBodies[1], false);
 }
 
 void resetSimulationTuningToDefaults() {
@@ -73,8 +145,21 @@ void resetSimulationTuningToDefaults() {
 static void applyAirAndAngularDamping(RigidBody& body, float dt) {
     const float ad = g_simTuning.angularDampingPerSecond;
     if (ad > 0.0f) {
-        const float s = std::max(0.0f, 1.0f - ad * dt);
-        body.angularVelocity = body.angularVelocity * s;
+        Vec3 spinAxis = quatRotateVector(body.orientation, Vec3{0.0f, 1.0f, 0.0f});
+        const float axisLen = length(spinAxis);
+        if (axisLen < 1.0e-5f) {
+            const float s = std::max(0.0f, 1.0f - ad * dt);
+            body.angularVelocity = body.angularVelocity * s;
+        } else {
+            spinAxis = spinAxis * (1.0f / axisLen);
+            const float yScale = std::clamp(g_simTuning.angularDampingSpinAxisScale, 0.0f, 2.0f);
+            const Vec3 w = body.angularVelocity;
+            const float wAlong = dot(w, spinAxis);
+            const Vec3 wPerp = w - spinAxis * wAlong;
+            const float sPerp = std::max(0.0f, 1.0f - ad * dt);
+            const float sAlong = std::max(0.0f, 1.0f - ad * yScale * dt);
+            body.angularVelocity = spinAxis * (wAlong * sAlong) + wPerp * sPerp;
+        }
     }
     const float ld = g_simTuning.linearAirDragPerSecond;
     if (ld > 0.0f && s_matchApproachGraceSubsteps <= 0) {
@@ -101,8 +186,8 @@ void randomizeTopsForMatch() {
     const float halfH = g_simTuning.arenaHalfHeight;
     const float floorY = g_simTuning.arenaFloorY;
     const float inset = g_simTuning.matchArenaInset;
-    const float r0 = a.radius;
-    const float r1 = b.radius;
+    const float r0 = a.colliderBoundingRadius;
+    const float r1 = b.colliderBoundingRadius;
 
     const float minXZ = std::max(r0 + inset, 1.0f);
     const float maxX0 = halfW - minXZ;
@@ -330,73 +415,295 @@ static void resolveContactImpulses(
     }
 }
 
-static void resolvePlaneContact(RigidBody& body, int bodyIndex, float planeY, float ballRadius, float dt) {
+static void resolvePlaneContactCompound(RigidBody& body, int bodyIndex, float planeY, float dt) {
     const Vec3 n = {0.0f, 1.0f, 0.0f};
-    const float bottomY = body.position.y - ballRadius;
-    if (bottomY > planeY) {
+    float lowestBottom = 1.0e30f;
+    std::uint8_t deepest = 0;
+    for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+        const CollisionSphere& s = body.collisionSpheres[i];
+        const Vec3 wc = body.position + quatRotateVector(body.orientation, s.offsetBody);
+        const float bottom = wc.y - s.radius;
+        if (bottom < lowestBottom) {
+            lowestBottom = bottom;
+            deepest = i;
+        }
+    }
+    if (lowestBottom > planeY) {
         return;
     }
 
-    const float penetration = planeY - bottomY;
+    const float penetration = planeY - lowestBottom;
     body.position = body.position + n * penetration;
 
-    const Vec3 r = n * (-ballRadius);
+    const CollisionSphere& s = body.collisionSpheres[deepest];
+    const Vec3 wc = body.position + quatRotateVector(body.orientation, s.offsetBody);
+    const Vec3 contact = {wc.x, wc.y - s.radius, wc.z};
+    const Vec3 r = contact - body.position;
     resolveContactImpulses(body, n, r, dt, true, true, bodyIndex, ContactSurfaceKind::Floor);
 }
 
-static void resolveArenaWalls(RigidBody& body, int bodyIndex, float ballRadius, float halfW, float halfD, float dt) {
-    const auto wallX = [&](bool positiveSide) {
-        const Vec3 n = positiveSide ? Vec3{-1.0f, 0.0f, 0.0f} : Vec3{1.0f, 0.0f, 0.0f};
-        float penetration = 0.0f;
-        if (positiveSide) {
-            const float limit = halfW;
-            if (body.position.x + ballRadius <= limit) {
-                return;
-            }
-            penetration = body.position.x + ballRadius - limit;
-        } else {
-            const float limit = -halfW;
-            if (body.position.x - ballRadius >= limit) {
-                return;
-            }
-            penetration = limit - (body.position.x - ballRadius);
+static void resolveArenaWallsCompound(RigidBody& body, int bodyIndex, float halfW, float halfD, float dt) {
+    const auto wallPositiveX = [&] {
+        const float limit = halfW;
+        float maxRight = -1.0e30f;
+        for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+            const CollisionSphere& s = body.collisionSpheres[i];
+            const Vec3 wo = quatRotateVector(body.orientation, s.offsetBody);
+            const Vec3 wc = body.position + wo;
+            maxRight = std::max(maxRight, wc.x + s.radius);
         }
+        if (maxRight <= limit) {
+            return;
+        }
+        const Vec3 n{-1.0f, 0.0f, 0.0f};
+        const float penetration = maxRight - limit;
         body.position = body.position + n * penetration;
-        const Vec3 r = n * (-ballRadius);
+
+        std::uint8_t best = 0;
+        float bestEx = -1.0e30f;
+        for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+            const CollisionSphere& s = body.collisionSpheres[i];
+            const Vec3 wo = quatRotateVector(body.orientation, s.offsetBody);
+            const Vec3 wc = body.position + wo;
+            const float ex = wc.x + s.radius;
+            if (ex > bestEx) {
+                bestEx = ex;
+                best = i;
+            }
+        }
+        const CollisionSphere& s = body.collisionSpheres[best];
+        const Vec3 wo = quatRotateVector(body.orientation, s.offsetBody);
+        const Vec3 wc = body.position + wo;
+        const Vec3 contact{limit, wc.y, wc.z};
+        const Vec3 r = contact - body.position;
         resolveContactImpulses(body, n, r, dt, false, false, bodyIndex, ContactSurfaceKind::Wall);
     };
 
-    const auto wallZ = [&](bool positiveSide) {
-        const Vec3 n = positiveSide ? Vec3{0.0f, 0.0f, -1.0f} : Vec3{0.0f, 0.0f, 1.0f};
-        float penetration = 0.0f;
-        if (positiveSide) {
-            const float limit = halfD;
-            if (body.position.z + ballRadius <= limit) {
-                return;
-            }
-            penetration = body.position.z + ballRadius - limit;
-        } else {
-            const float limit = -halfD;
-            if (body.position.z - ballRadius >= limit) {
-                return;
-            }
-            penetration = limit - (body.position.z - ballRadius);
+    const auto wallNegativeX = [&] {
+        const float limit = -halfW;
+        float minLeft = 1.0e30f;
+        for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+            const CollisionSphere& s = body.collisionSpheres[i];
+            const Vec3 wo = quatRotateVector(body.orientation, s.offsetBody);
+            const Vec3 wc = body.position + wo;
+            minLeft = std::min(minLeft, wc.x - s.radius);
         }
+        if (minLeft >= limit) {
+            return;
+        }
+        const Vec3 n{1.0f, 0.0f, 0.0f};
+        const float penetration = limit - minLeft;
         body.position = body.position + n * penetration;
-        const Vec3 r = n * (-ballRadius);
+
+        std::uint8_t best = 0;
+        float bestLeft = 1.0e30f;
+        for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+            const CollisionSphere& s = body.collisionSpheres[i];
+            const Vec3 wo = quatRotateVector(body.orientation, s.offsetBody);
+            const Vec3 wc = body.position + wo;
+            const float left = wc.x - s.radius;
+            if (left < bestLeft) {
+                bestLeft = left;
+                best = i;
+            }
+        }
+        const CollisionSphere& s = body.collisionSpheres[best];
+        const Vec3 wo = quatRotateVector(body.orientation, s.offsetBody);
+        const Vec3 wc = body.position + wo;
+        const Vec3 contact{limit, wc.y, wc.z};
+        const Vec3 r = contact - body.position;
         resolveContactImpulses(body, n, r, dt, false, false, bodyIndex, ContactSurfaceKind::Wall);
     };
 
-    wallX(true);
-    wallX(false);
-    wallZ(true);
-    wallZ(false);
+    const auto wallPositiveZ = [&] {
+        const float limit = halfD;
+        float maxFront = -1.0e30f;
+        for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+            const CollisionSphere& s = body.collisionSpheres[i];
+            const Vec3 wo = quatRotateVector(body.orientation, s.offsetBody);
+            const Vec3 wc = body.position + wo;
+            maxFront = std::max(maxFront, wc.z + s.radius);
+        }
+        if (maxFront <= limit) {
+            return;
+        }
+        const Vec3 n{0.0f, 0.0f, -1.0f};
+        const float penetration = maxFront - limit;
+        body.position = body.position + n * penetration;
+
+        std::uint8_t best = 0;
+        float bestEx = -1.0e30f;
+        for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+            const CollisionSphere& s = body.collisionSpheres[i];
+            const Vec3 wo = quatRotateVector(body.orientation, s.offsetBody);
+            const Vec3 wc = body.position + wo;
+            const float ex = wc.z + s.radius;
+            if (ex > bestEx) {
+                bestEx = ex;
+                best = i;
+            }
+        }
+        const CollisionSphere& s = body.collisionSpheres[best];
+        const Vec3 wo = quatRotateVector(body.orientation, s.offsetBody);
+        const Vec3 wc = body.position + wo;
+        const Vec3 contact{wc.x, wc.y, limit};
+        const Vec3 r = contact - body.position;
+        resolveContactImpulses(body, n, r, dt, false, false, bodyIndex, ContactSurfaceKind::Wall);
+    };
+
+    const auto wallNegativeZ = [&] {
+        const float limit = -halfD;
+        float minBack = 1.0e30f;
+        for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+            const CollisionSphere& s = body.collisionSpheres[i];
+            const Vec3 wo = quatRotateVector(body.orientation, s.offsetBody);
+            const Vec3 wc = body.position + wo;
+            minBack = std::min(minBack, wc.z - s.radius);
+        }
+        if (minBack >= limit) {
+            return;
+        }
+        const Vec3 n{0.0f, 0.0f, 1.0f};
+        const float penetration = limit - minBack;
+        body.position = body.position + n * penetration;
+
+        std::uint8_t best = 0;
+        float bestBack = 1.0e30f;
+        for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+            const CollisionSphere& s = body.collisionSpheres[i];
+            const Vec3 wo = quatRotateVector(body.orientation, s.offsetBody);
+            const Vec3 wc = body.position + wo;
+            const float back = wc.z - s.radius;
+            if (back < bestBack) {
+                bestBack = back;
+                best = i;
+            }
+        }
+        const CollisionSphere& s = body.collisionSpheres[best];
+        const Vec3 wo = quatRotateVector(body.orientation, s.offsetBody);
+        const Vec3 wc = body.position + wo;
+        const Vec3 contact{wc.x, wc.y, limit};
+        const Vec3 r = contact - body.position;
+        resolveContactImpulses(body, n, r, dt, false, false, bodyIndex, ContactSurfaceKind::Wall);
+    };
+
+    wallPositiveX();
+    wallNegativeX();
+    wallPositiveZ();
+    wallNegativeZ();
 }
 
 static void applyImpulseAtContact(RigidBody& body, const Vec3& r, const Vec3& impulse) {
     body.linearVelocity = body.linearVelocity + impulse * (1.0f / body.mass);
     body.angularVelocity =
         body.angularVelocity + applyInvInertiaWorld(body.orientation, cross(r, impulse), body.invInertiaBody);
+}
+
+static void applyGyroUprightAssist(RigidBody& body, float dt) {
+    const float str = g_simTuning.gyroUprightStrength;
+    if (str <= 0.0f || dt <= 0.0f) {
+        return;
+    }
+
+    Vec3 localY = quatRotateVector(body.orientation, Vec3{0.0f, 1.0f, 0.0f});
+    const float axisLen = length(localY);
+    if (axisLen < 1.0e-5f) {
+        return;
+    }
+    localY = localY * (1.0f / axisLen);
+
+    const float spin = std::fabs(dot(body.angularVelocity, localY));
+    const float dead = g_simTuning.gyroUprightSpinDead;
+    const float full = g_simTuning.gyroUprightSpinFull;
+    if (spin < dead) {
+        return;
+    }
+    float gate = (spin - dead) / std::max(full - dead, 1.0e-3f);
+    gate = std::clamp(gate, 0.0f, 1.0f);
+
+    const Vec3 worldUp{0.0f, 1.0f, 0.0f};
+    Vec3 torqueAxis = cross(localY, worldUp);
+    const float sinA = length(torqueAxis);
+    if (sinA < 1.0e-5f) {
+        return;
+    }
+    torqueAxis = torqueAxis * (1.0f / sinA);
+    float torqueMag = str * gate * sinA;
+    if (g_simTuning.gyroUprightMaxTorque > 0.0f) {
+        torqueMag = std::min(torqueMag, g_simTuning.gyroUprightMaxTorque);
+    }
+    const Vec3 torque = torqueAxis * torqueMag;
+
+    body.angularVelocity =
+        body.angularVelocity
+        + applyInvInertiaWorld(body.orientation, torque, body.invInertiaBody) * dt;
+}
+
+static void applyBattleBand(float dt, bool skipLaunchableBody) {
+    if (g_rigidBodies.size() < 2 || skipLaunchableBody) {
+        return;
+    }
+    const float maxJ = g_simTuning.battleBandMaxImpulsePerStep;
+    const float k = g_simTuning.battleBandStiffness;
+    const float rest = g_simTuning.battleBandRestDistance;
+    const float minSpin = g_simTuning.battleBandMinSpinAboutAxis;
+    if (maxJ <= 0.0f || k <= 0.0f) {
+        return;
+    }
+
+    RigidBody& a = g_rigidBodies[0];
+    RigidBody& b = g_rigidBodies[1];
+
+    auto spinAboutAxis = [](const RigidBody& body) -> float {
+        Vec3 axis = quatRotateVector(body.orientation, Vec3{0.0f, 1.0f, 0.0f});
+        const float len = length(axis);
+        if (len < 1.0e-5f) {
+            return 0.0f;
+        }
+        axis = axis * (1.0f / len);
+        return std::fabs(dot(body.angularVelocity, axis));
+    };
+
+    if (std::min(spinAboutAxis(a), spinAboutAxis(b)) < minSpin) {
+        return;
+    }
+
+    Vec3 rab = b.position - a.position;
+    rab.y = 0.0f;
+    const float dist = length(rab);
+    if (dist < 1.0e-4f) {
+        return;
+    }
+    const float excess = dist - rest;
+    if (excess <= 0.0f) {
+        return;
+    }
+
+    const Vec3 dir = rab * (1.0f / dist);
+    const float J = std::min(maxJ, k * excess * dt);
+    applyLinearImpulseAtCom(a, dir * J);
+    applyLinearImpulseAtCom(b, dir * (-J));
+}
+
+static void clampRigidBodySpeeds(RigidBody& body) {
+    const float upCap = g_simTuning.maxUpwardLinearSpeed;
+    if (upCap > 0.0f && body.linearVelocity.y > upCap) {
+        body.linearVelocity.y = upCap;
+    }
+    const float vMax = g_simTuning.maxLinearSpeed;
+    if (vMax > 0.0f) {
+        const float s = length(body.linearVelocity);
+        if (s > vMax) {
+            body.linearVelocity = body.linearVelocity * (vMax / s);
+        }
+    }
+    const float wMax = g_simTuning.maxAngularSpeed;
+    if (wMax > 0.0f) {
+        const float s = length(body.angularVelocity);
+        if (s > wMax) {
+            body.angularVelocity = body.angularVelocity * (wMax / s);
+        }
+    }
 }
 
 // Treat pairs as separated when centers are farther than this past touching distance.
@@ -411,10 +718,21 @@ static void separateSphereCenters(RigidBody& a, RigidBody& b, const Vec3& n, flo
     b.position = b.position + n * (penetration * a.mass * invSum);
 }
 
-static void resolveSphereSpherePair(RigidBody& a, RigidBody& b, float dt, int idxA, int idxB) {
-    Vec3 delta = b.position - a.position;
+static void resolveOneWorldSpherePair(
+    RigidBody& a,
+    RigidBody& b,
+    const Vec3& woA,
+    const Vec3& woB,
+    float ra,
+    float rb,
+    float dt,
+    int idxA,
+    int idxB) {
+    Vec3 wa = a.position + woA;
+    Vec3 wb = b.position + woB;
+    Vec3 delta = wb - wa;
     float d = length(delta);
-    const float minDist = a.radius + b.radius;
+    const float minDist = ra + rb;
 
     if (d > minDist + kSphereSeparatedTolerance) {
         return;
@@ -432,7 +750,9 @@ static void resolveSphereSpherePair(RigidBody& a, RigidBody& b, float dt, int id
     const float penetration = minDist - d;
     if (penetration > 0.0f) {
         separateSphereCenters(a, b, n, penetration);
-        delta = b.position - a.position;
+        wa = a.position + woA;
+        wb = b.position + woB;
+        delta = wb - wa;
         d = length(delta);
         if (d < 1.0e-8f) {
             n = {1.0f, 0.0f, 0.0f};
@@ -441,17 +761,21 @@ static void resolveSphereSpherePair(RigidBody& a, RigidBody& b, float dt, int id
         }
     }
 
-    const Vec3 rA = n * a.radius;
-    const Vec3 rB = n * (-b.radius);
+    const Vec3 contact = wa + n * ra;
+    const Vec3 rA = contact - a.position;
+    const Vec3 rB = contact - b.position;
 
     Vec3 vRel = a.linearVelocity + cross(a.angularVelocity, rA) - b.linearVelocity - cross(b.angularVelocity, rB);
     const float vn = dot(vRel, n);
+
+    const float impulseScale = std::clamp(g_simTuning.sphereSphereImpulseResponseScale, 0.0f, 2.0f);
 
     float jn = 0.0f;
     if (vn < 0.0f) {
         const float invMassSum = 1.0f / a.mass + 1.0f / b.mass;
         const float denom = std::max(invMassSum, 1.0e-12f);
         jn = -(1.0f + g_simTuning.sphereSphereRestitution) * vn / denom;
+        jn *= impulseScale;
         applyImpulseAtContact(a, rA, n * jn);
         applyImpulseAtContact(b, rB, n * (-jn));
     }
@@ -462,7 +786,7 @@ static void resolveSphereSpherePair(RigidBody& a, RigidBody& b, float dt, int id
         const float lr = length(rab);
         if (lr > 1.0e-4f) {
             const Vec3 seek = rab * (1.0f / lr);
-            const float jSeek = g_simTuning.sphereSphereSeekAccel * dt;
+            const float jSeek = g_simTuning.sphereSphereSeekAccel * dt * impulseScale;
             applyImpulseAtContact(a, rA, seek * (a.mass * jSeek));
             applyImpulseAtContact(b, rB, seek * (-b.mass * jSeek));
         }
@@ -495,18 +819,16 @@ static void resolveSphereSpherePair(RigidBody& a, RigidBody& b, float dt, int id
     const float jtFree = -dot(vRel, t) / denomT;
 
     const float jnAbs = std::fabs(jn);
-    // Floor uses a large gravity proxy when jn≈0; for two tops that makes tangential friction huge and
-    // they “stick” and slide. Use a small resting normal only when there was no collision impulse.
     const float minMass = std::min(a.mass, b.mass);
     const float restingNormalImpulse = minMass * length(g_simTuning.gravity) * dt * 0.06f;
     const float jMaxBase = g_simTuning.sphereSphereFrictionMu * std::max(jnAbs, restingNormalImpulse);
-    const float slipNorm =
-        vtLen / (g_simTuning.sphereSphereSlipRef + 1.0e-5f);
+    const float slipNorm = vtLen / (g_simTuning.sphereSphereSlipRef + 1.0e-5f);
     const float slipBoost =
         1.0f + g_simTuning.sphereSphereSlipBoost * std::min(slipNorm, g_simTuning.sphereSphereSlipBoostMax);
     const float jMax = jMaxBase * slipBoost;
 
-    const float jt = std::clamp(jtFree, -jMax, jMax);
+    float jt = std::clamp(jtFree, -jMax, jMax);
+    jt *= impulseScale;
     applyImpulseAtContact(a, rA, t * jt);
     applyImpulseAtContact(b, rB, t * (-jt));
 
@@ -521,7 +843,7 @@ static void resolveSphereSpherePair(RigidBody& a, RigidBody& b, float dt, int id
     dbg.ssLastValid = true;
     dbg.ssLastBodyI = idxA;
     dbg.ssLastBodyJ = idxB;
-    dbg.ssLastContact = a.position + rA;
+    dbg.ssLastContact = contact;
     dbg.ssLastN = n;
     dbg.ssLastT = t;
     dbg.ssLastJn = jn;
@@ -533,13 +855,26 @@ static void resolveSphereSpherePair(RigidBody& a, RigidBody& b, float dt, int id
     dbg.ssLastSaturated = sat;
 }
 
+static void resolveCompoundPair(RigidBody& a, RigidBody& b, float dt, int idxA, int idxB) {
+    for (std::uint8_t ia = 0; ia < a.collisionSphereCount; ++ia) {
+        for (std::uint8_t ib = 0; ib < b.collisionSphereCount; ++ib) {
+            const CollisionSphere& sa = a.collisionSpheres[ia];
+            const CollisionSphere& sb = b.collisionSpheres[ib];
+            const Vec3 woA = quatRotateVector(a.orientation, sa.offsetBody);
+            const Vec3 woB = quatRotateVector(b.orientation, sb.offsetBody);
+            resolveOneWorldSpherePair(a, b, woA, woB, sa.radius, sb.radius, dt, idxA, idxB);
+        }
+    }
+}
+
+
 static void integrateRigidBodyTranslation(RigidBody& body, float dt, int bodyIndex) {
     body.linearVelocity = body.linearVelocity + g_simTuning.gravity * dt;
     body.position = body.position + body.linearVelocity * dt;
 
-    resolvePlaneContact(body, bodyIndex, g_simTuning.arenaFloorY, body.radius, dt);
-    resolveArenaWalls(
-        body, bodyIndex, body.radius, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight, dt);
+    resolvePlaneContactCompound(body, bodyIndex, g_simTuning.arenaFloorY, dt);
+    resolveArenaWallsCompound(
+        body, bodyIndex, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight, dt);
 }
 
 static void integrateRigidBodyOrientation(RigidBody& body, float dt) {
@@ -564,7 +899,7 @@ void physicsFixedSubstep(float dt, bool skipLaunchableBody) {
                 if (skipLaunchableBody && (i == kLaunchableBodyIndex || j == kLaunchableBodyIndex)) {
                     continue;
                 }
-                resolveSphereSpherePair(g_rigidBodies[i], g_rigidBodies[j], dt, static_cast<int>(i), static_cast<int>(j));
+                resolveCompoundPair(g_rigidBodies[i], g_rigidBodies[j], dt, static_cast<int>(i), static_cast<int>(j));
             }
         }
     }
@@ -575,6 +910,16 @@ void physicsFixedSubstep(float dt, bool skipLaunchableBody) {
         }
         integrateRigidBodyOrientation(g_rigidBodies[i], dt);
         applyAirAndAngularDamping(g_rigidBodies[i], dt);
+        applyGyroUprightAssist(g_rigidBodies[i], dt);
+    }
+
+    applyBattleBand(dt, skipLaunchableBody);
+
+    for (std::size_t i = 0; i < g_rigidBodies.size(); ++i) {
+        if (skipLaunchableBody && i == kLaunchableBodyIndex) {
+            continue;
+        }
+        clampRigidBodySpeeds(g_rigidBodies[i]);
     }
 
     if (s_matchApproachGraceSubsteps > 0) {

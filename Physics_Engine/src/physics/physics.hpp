@@ -1,12 +1,30 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "math/types.hpp"
 #include "physics/tuning.hpp"
 
 constexpr int kCircleSegments = 64;
+
+enum class CollisionSphereRole : std::uint8_t {
+    Tip = 0,      // performance tip below COM
+    Hub = 1,      // central stem / mass near spin axis
+    DiskRing = 2, // top “energy layer” ring (flat ring of spheres)
+    MidAttack = 3 // optional mid-height bumps
+};
+
+// Child sphere in body space (spins with the top). Role is used for debug colors / struts.
+struct CollisionSphere {
+    Vec3 offsetBody{};
+    float radius = 1.0f;
+    CollisionSphereRole role = CollisionSphereRole::Hub;
+};
+
+constexpr int kMaxCollisionSpheresPerBody = 16;
 
 struct RigidBody {
     Vec3 position;
@@ -15,7 +33,13 @@ struct RigidBody {
     Quaternion orientation;
     float mass;
     Vec3 invInertiaBody{};
+    // Core radius: inertia, tuning sync, and default core collider radius.
     float radius = 45.0f;
+    // max_i(|offsetBody_i| + radius_i) — spawn / match separation; updated in rebuildRigidBodyCompoundColliders.
+    float colliderBoundingRadius = 45.0f;
+    std::array<CollisionSphere, kMaxCollisionSpheresPerBody> collisionSpheres{
+        CollisionSphere{Vec3{0.0f, 0.0f, 0.0f}, 45.0f, CollisionSphereRole::Hub}};
+    std::uint8_t collisionSphereCount = 1;
 };
 
 extern std::vector<RigidBody> g_rigidBodies;
@@ -102,6 +126,7 @@ extern StickSlideFrameDebug g_stickSlideFrameDebug;
 void resetStickSlideFrameDebug();
 
 void recomputeBeybladeInertia(RigidBody& body);
+void rebuildRigidBodyCompoundColliders(RigidBody& body, bool isBody0);
 void syncRigidBodiesFromTuning();
 void resetSimulationTuningToDefaults();
 
