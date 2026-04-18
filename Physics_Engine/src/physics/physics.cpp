@@ -30,6 +30,27 @@ std::vector<RigidBody> g_rigidBodies = {
 
 float g_fixedStepAccumulator = 0.0f;
 
+void applyLinearImpulseAtCom(RigidBody& body, const Vec3& impulse) {
+    body.linearVelocity = body.linearVelocity + impulse * (1.0f / body.mass);
+}
+
+void applyAngularImpulseAboutWorldYUpright(RigidBody& body, float Hy) {
+    body.angularVelocity.y += Hy * body.invInertiaBody.y;
+}
+
+void applyLaunchIntentFromZSlingshot(RigidBody& body, const LaunchIntent& intent) {
+    body.orientation = {1.0f, 0.0f, 0.0f, 0.0f};
+    body.linearVelocity = {0.0f, 0.0f, 0.0f};
+    body.angularVelocity = {0.0f, 0.0f, 0.0f};
+
+    const Vec3 horizontal = {intent.horizontalVelocity.x, 0.0f, intent.horizontalVelocity.z};
+    applyLinearImpulseAtCom(body, horizontal * body.mass);
+
+    const float Iyy = 1.0f / std::max(body.invInertiaBody.y, 1.0e-6f);
+    const float Hy = intent.spinAboutWorldY * Iyy;
+    applyAngularImpulseAboutWorldYUpright(body, Hy);
+}
+
 // n: unit normal from solid into arena (air). r: COM -> contact on body (world).
 static void resolveContactImpulses(
     RigidBody& body,

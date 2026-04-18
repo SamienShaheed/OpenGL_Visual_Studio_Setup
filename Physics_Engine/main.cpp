@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <iostream>
 #include <vector>
 
@@ -19,6 +20,7 @@ constexpr float kPerspectiveFovY = 1.0472f;
 constexpr float kLaunchDragMin = 0.5f;
 constexpr float kLaunchStrength = 2.2f;
 constexpr float kMaxLaunchSpeed = 720.0f;
+constexpr float kLaunchSpinAdjustRate = 10.0f; // rad/s per second while holding [ or ]
 
 bool rayIntersectPlaneY(const Vec3& eye, const Vec3& rayDir, float planeY, Vec3& outHit) {
     if (std::fabs(rayDir.y) < 1.0e-8f) {
@@ -149,6 +151,7 @@ int main() {
     bool s_zDragActive = false;
     Vec3 s_dragStart{};
     Vec3 s_dragCurrent{};
+    float s_launchSpinY = kTopSpinAboutWorldY;
 
     while (!glfwWindowShouldClose(window)) {
         const float frameDt = computeDeltaTimeSeconds();
@@ -176,6 +179,7 @@ int main() {
         if (zDown && !s_prevZ) {
             if (hasFloorHit && pointInsideArenaXZ(floorHit.x, floorHit.z)) {
                 resetLaunchableTopForSlingshot();
+                s_launchSpinY = kTopSpinAboutWorldY;
                 s_zDragActive = true;
                 s_dragStart = floorHit;
                 s_dragCurrent = floorHit;
@@ -189,6 +193,25 @@ int main() {
                 s_dragCurrent = floorHit;
             }
             resetLaunchableTopForSlingshot();
+            if (glfwGetKey(window, GLFW_KEY_LEFT_BRACKET) == GLFW_PRESS) {
+                s_launchSpinY -= kLaunchSpinAdjustRate * frameDt;
+            }
+            if (glfwGetKey(window, GLFW_KEY_RIGHT_BRACKET) == GLFW_PRESS) {
+                s_launchSpinY += kLaunchSpinAdjustRate * frameDt;
+            }
+            s_launchSpinY = std::clamp(s_launchSpinY, kLaunchSpinYMin, kLaunchSpinYMax);
+        }
+
+        if (draggingZLaunch) {
+            char title[192];
+            std::snprintf(
+                title,
+                sizeof(title),
+                "Physics Engine 3D — Z drag | spin %.1f rad/s  [ ] adjust",
+                static_cast<double>(s_launchSpinY));
+            glfwSetWindowTitle(window, title);
+        } else {
+            glfwSetWindowTitle(window, "Physics Engine 3D Debug View");
         }
 
         g_fixedStepAccumulator += frameDt;
@@ -204,17 +227,16 @@ int main() {
         }
 
         if (!zDown && s_prevZ && s_zDragActive) {
-            RigidBody& b = launchableTop();
+            LaunchIntent intent{};
+            intent.spinAboutWorldY = s_launchSpinY;
             const Vec3 delta = {s_dragCurrent.x - s_dragStart.x, 0.0f, s_dragCurrent.z - s_dragStart.z};
             const float d = length(delta);
             if (d > kLaunchDragMin) {
                 const Vec3 dir = delta * (1.0f / d);
                 const float speed = std::min(d * kLaunchStrength, kMaxLaunchSpeed);
-                // Horizontal impulse only; do not tip the top or add roll/pitch spin.
-                b.linearVelocity = {-dir.x * speed, 0.0f, -dir.z * speed};
+                intent.horizontalVelocity = {-dir.x * speed, 0.0f, -dir.z * speed};
             }
-            b.orientation = {1.0f, 0.0f, 0.0f, 0.0f};
-            b.angularVelocity = {0.0f, kTopSpinAboutWorldY, 0.0f};
+            applyLaunchIntentFromZSlingshot(launchableTop(), intent);
             s_zDragActive = false;
         }
 
