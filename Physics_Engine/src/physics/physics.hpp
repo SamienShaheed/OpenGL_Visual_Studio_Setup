@@ -37,9 +37,13 @@ constexpr float kArenaFloorY = 0.0f;
 constexpr Vec3 kGravity = {0.0f, -520.0f, 0.0f};
 constexpr float kContactRestitution = 0.68f;
 constexpr float kFrictionMu = 0.42f;
+// Sphere–sphere: bouncier and much less “grip” than floor/wall so tops glance off instead of sticking.
+constexpr float kSphereSphereRestitution = 0.82f;
+constexpr float kSphereSphereFrictionMu = 0.14f;
 
 constexpr float kFixedTimeStepSeconds = 1.0f / 120.0f;
 constexpr int kMaxFixedStepsPerFrame = 8;
 extern float g_fixedStepAccumulator;
 
-void integrateRigidBody(RigidBody& body, float dt);
+// Translation (gravity, floor, walls) → sphere–sphere pairs → orientation integration.
+void physicsFixedSubstep(float dt, bool skipLaunchableBody);

@@ -195,12 +195,7 @@ int main() {
 
         int simulatedSteps = 0;
         while (g_fixedStepAccumulator >= kFixedTimeStepSeconds && simulatedSteps < kMaxFixedStepsPerFrame) {
-            for (std::size_t i = 0; i < g_rigidBodies.size(); ++i) {
-                if (draggingZLaunch && i == kLaunchableBodyIndex) {
-                    continue;
-                }
-                integrateRigidBody(g_rigidBodies[i], kFixedTimeStepSeconds);
-            }
+            physicsFixedSubstep(kFixedTimeStepSeconds, draggingZLaunch);
             g_fixedStepAccumulator -= kFixedTimeStepSeconds;
             simulatedSteps++;
         }
