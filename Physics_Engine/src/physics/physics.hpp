@@ -130,6 +130,14 @@ void rebuildRigidBodyCompoundColliders(RigidBody& body, bool isBody0);
 void syncRigidBodiesFromTuning();
 void resetSimulationTuningToDefaults();
 
+// Arena floor height at (x,z): flat arenaFloorY, or paraboloid center + k*r^2 when bowl is enabled.
+float arenaFloorSurfaceYAtXZ(float x, float z);
+bool arenaUsesParaboloidBowlArena();
+// True if (x,z) lies inside the playable disc (bowl) or rectangle (flat arena).
+bool pointInsideArenaPlayableXZ(float x, float z);
+// First hit t>0 of eye + t*dir with the playable floor (paraboloid or plane); dir need not be unit.
+bool raycastArenaPlayableFloor(const Vec3& eye, const Vec3& dir, Vec3& outHit);
+
 // Randomize both tops in arena: XZ positions, random spins, equal closing speed toward each other.
 void randomizeTopsForMatch();
 

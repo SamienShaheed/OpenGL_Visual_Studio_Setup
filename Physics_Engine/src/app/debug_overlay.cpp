@@ -3,6 +3,8 @@
 #include "math/math.hpp"
 #include "physics/physics.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 
 #include <glad/glad.h>
@@ -19,6 +21,7 @@ void initDebugOverlay(GLFWwindow* window) {
     ImGui::StyleColorsDark();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.IniFilename = "imgui.ini";
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 400 core");
@@ -51,11 +54,11 @@ void debugOverlayDrawHud(
     float launchSpinY) {
     ImGuiIO& io = ImGui::GetIO();
 
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 14.0f, 14.0f), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 14.0f, 14.0f), ImGuiCond_FirstUseEver, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowSize(ImVec2(340.0f, 400.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.88f);
 
-    constexpr ImGuiWindowFlags kFlags =
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_None;
 
     ImGui::Begin("Debug##physics", nullptr, kFlags);
 
@@ -118,9 +121,9 @@ void debugOverlayDrawHud(
 
 void debugOverlayDrawTuningPanel() {
     ImGui::SetNextWindowPos(ImVec2(14.0f, 14.0f), ImGuiCond_FirstUseEver, ImVec2(0.0f, 0.0f));
+    ImGui::SetNextWindowSize(ImVec2(440.0f, 720.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.88f);
-    constexpr ImGuiWindowFlags kFlags =
-        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_None;
 
     ImGui::Begin("Tuning##physics", nullptr, kFlags);
 
@@ -145,9 +148,16 @@ void debugOverlayDrawTuningPanel() {
     ImGui::DragFloat("Max upward vy", &g_simTuning.maxUpwardLinearSpeed, 5.0f, 0.0f, 2000.0f);
 
     ImGui::SeparatorText("Arena");
-    ImGui::DragFloat("Half width (X)", &g_simTuning.arenaHalfWidth, 1.0f, 50.0f, 2000.0f);
-    ImGui::DragFloat("Half depth (Z)", &g_simTuning.arenaHalfHeight, 1.0f, 50.0f, 2000.0f);
-    ImGui::DragFloat("Floor Y", &g_simTuning.arenaFloorY, 0.5f, -500.0f, 500.0f);
+    ImGui::Checkbox("Paraboloid bowl arena", &g_simTuning.arenaUseParaboloidBowl);
+    ImGui::DragFloat("Floor Y (bowl center)", &g_simTuning.arenaFloorY, 0.5f, -500.0f, 500.0f);
+    if (g_simTuning.arenaUseParaboloidBowl) {
+        ImGui::DragFloat("Bowl curvature k", &g_simTuning.bowlCurvatureK, 0.5e-5f, 0.0f, 0.002f, "%.6f");
+        ImGui::DragFloat("Bowl rim radius", &g_simTuning.bowlMaxRimRadius, 1.0f, 30.0f, 2000.0f);
+        ImGui::TextUnformatted("Surface: y = floorY + k (x^2+z^2); vertical rim at r = rim radius.");
+    } else {
+        ImGui::DragFloat("Half width (X)", &g_simTuning.arenaHalfWidth, 1.0f, 50.0f, 2000.0f);
+        ImGui::DragFloat("Half depth (Z)", &g_simTuning.arenaHalfHeight, 1.0f, 50.0f, 2000.0f);
+    }
     ImGui::DragFloat("Wall height (visual)", &g_simTuning.arenaWallHeight, 1.0f, 0.0f, 2000.0f);
 
     ImGui::SeparatorText("Time step");
@@ -241,6 +251,77 @@ void debugOverlayDrawTuningPanel() {
     }
 
     ImGui::End();
+}
+
+void debugOverlayDrawOrientationGizmo(const Mat4& view, int fbw, int fbh) {
+    if (fbw <= 0 || fbh <= 0) {
+        return;
+    }
+
+    struct AxisDef {
+        Vec3 world;
+        const char* label;
+        ImU32 colPos;
+        ImU32 colNeg;
+    };
+    const std::array<AxisDef, 3> kAxes = {{
+        {{1.0f, 0.0f, 0.0f}, "X", IM_COL32(232, 76, 82, 255), IM_COL32(120, 44, 50, 255)},
+        {{0.0f, 1.0f, 0.0f}, "Y", IM_COL32(78, 214, 92, 255), IM_COL32(46, 112, 54, 255)},
+        {{0.0f, 0.0f, 1.0f}, "Z", IM_COL32(88, 158, 248, 255), IM_COL32(48, 86, 138, 255)},
+    }};
+
+    struct ScoredAxis {
+        Vec3 av;
+        ImVec2 dir2d;
+        const char* label;
+        ImU32 colPos;
+        ImU32 colNeg;
+    };
+    std::array<ScoredAxis, 3> scored{};
+    for (int i = 0; i < 3; ++i) {
+        Vec3 av = mat4TransformDirection(view, kAxes[i].world);
+        const float len3 = length(av);
+        if (len3 > 1.0e-6f) {
+            av = av * (1.0f / len3);
+        }
+        ImVec2 d(av.x, -av.y);
+        const float l2 = std::sqrt(d.x * d.x + d.y * d.y);
+        if (l2 > 1.0e-5f) {
+            d.x /= l2;
+            d.y /= l2;
+        } else {
+            d = ImVec2(1.0f, 0.0f);
+        }
+        scored[i] = {av, d, kAxes[i].label, kAxes[i].colPos, kAxes[i].colNeg};
+    }
+    std::sort(scored.begin(), scored.end(),
+        [](const ScoredAxis& a, const ScoredAxis& b) { return a.av.z < b.av.z; });
+
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    const float pad = 16.0f;
+    const float arm = 48.0f;
+    const float negScale = 0.44f;
+    const float hub = 4.0f;
+    const float posR = 12.0f;
+    const float negR = 7.0f;
+    const float lineThick = 4.0f;
+    const ImVec2 center(
+        static_cast<float>(fbw) - pad - arm - posR, static_cast<float>(fbh) - pad - arm - posR);
+
+    for (const ScoredAxis& ax : scored) {
+        const ImVec2 posEnd(center.x + ax.dir2d.x * arm, center.y + ax.dir2d.y * arm);
+        const ImVec2 negEnd(center.x - ax.dir2d.x * arm * negScale, center.y - ax.dir2d.y * arm * negScale);
+        dl->AddCircleFilled(negEnd, negR, ax.colNeg);
+        const ImVec2 lineA(center.x + ax.dir2d.x * hub, center.y + ax.dir2d.y * hub);
+        const ImVec2 lineB(
+            center.x + ax.dir2d.x * (arm - posR * 0.32f), center.y + ax.dir2d.y * (arm - posR * 0.32f));
+        dl->AddLine(lineA, lineB, ax.colPos, lineThick);
+        dl->AddCircleFilled(posEnd, posR, ax.colPos);
+        const ImVec2 ts = ImGui::CalcTextSize(ax.label);
+        dl->AddText(
+            ImVec2(posEnd.x - ts.x * 0.5f, posEnd.y - ts.y * 0.5f), IM_COL32(18, 20, 26, 255), ax.label);
+    }
+    dl->AddCircleFilled(center, 5.5f, IM_COL32(54, 56, 62, 255));
 }
 
 void debugOverlayRenderDrawData() {

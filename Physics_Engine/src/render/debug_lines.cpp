@@ -213,6 +213,75 @@ void appendArenaWallFrame(std::vector<Vec3>& outVerts, float halfW, float halfD,
     appendArenaBorder(outVerts, halfW, halfD, y1);
 }
 
+void appendBowlParaboloidWireframe(
+    std::vector<Vec3>& outVerts, float y0, float k, float maxR, int meridians, int radialSegments) {
+    if (maxR <= 0.0f || meridians < 3 || radialSegments < 2) {
+        return;
+    }
+    const float kClamped = std::max(0.0f, k);
+    const int m = meridians;
+    const int rs = radialSegments;
+    const float kTwoPi = 6.283185307f;
+    for (int mi = 0; mi < m; ++mi) {
+        const float ang = (static_cast<float>(mi) / static_cast<float>(m)) * kTwoPi;
+        const float ca = std::cos(ang);
+        const float sa = std::sin(ang);
+        for (int j = 0; j < rs; ++j) {
+            const float t0 = static_cast<float>(j) / static_cast<float>(rs);
+            const float t1 = static_cast<float>(j + 1) / static_cast<float>(rs);
+            const float r0 = maxR * t0;
+            const float r1 = maxR * t1;
+            const float yA = y0 + kClamped * (r0 * r0);
+            const float yB = y0 + kClamped * (r1 * r1);
+            outVerts.push_back({ca * r0, yA, sa * r0});
+            outVerts.push_back({ca * r1, yB, sa * r1});
+        }
+    }
+    for (int j = 1; j <= rs; ++j) {
+        const float r = maxR * (static_cast<float>(j) / static_cast<float>(rs));
+        const float y = y0 + kClamped * (r * r);
+        for (int mi = 0; mi < m; ++mi) {
+            const float ang0 = (static_cast<float>(mi) / static_cast<float>(m)) * kTwoPi;
+            const float ang1 = (static_cast<float>(mi + 1) / static_cast<float>(m)) * kTwoPi;
+            outVerts.push_back({std::cos(ang0) * r, y, std::sin(ang0) * r});
+            outVerts.push_back({std::cos(ang1) * r, y, std::sin(ang1) * r});
+        }
+    }
+}
+
+void appendBowlRimWallFrame(
+    std::vector<Vec3>& outVerts, float y0, float k, float maxR, float wallHeight, int segments) {
+    if (maxR <= 0.0f || wallHeight <= 0.0f || segments < 3) {
+        return;
+    }
+    const float kClamped = std::max(0.0f, k);
+    const float yRim = y0 + kClamped * maxR * maxR;
+    const float yTop = yRim + wallHeight;
+    const float kTwoPi = 6.283185307f;
+    for (int i = 0; i < segments; ++i) {
+        const float t0 = (static_cast<float>(i) / static_cast<float>(segments)) * kTwoPi;
+        const float t1 = (static_cast<float>(i + 1) / static_cast<float>(segments)) * kTwoPi;
+        const float x0 = std::cos(t0) * maxR;
+        const float z0 = std::sin(t0) * maxR;
+        const float x1 = std::cos(t1) * maxR;
+        const float z1 = std::sin(t1) * maxR;
+        outVerts.push_back({x0, yRim, z0});
+        outVerts.push_back({x0, yTop, z0});
+        outVerts.push_back({x0, yTop, z0});
+        outVerts.push_back({x1, yTop, z1});
+    }
+    for (int i = 0; i < segments; ++i) {
+        const float t0 = (static_cast<float>(i) / static_cast<float>(segments)) * kTwoPi;
+        const float t1 = (static_cast<float>(i + 1) / static_cast<float>(segments)) * kTwoPi;
+        const float x0 = std::cos(t0) * maxR;
+        const float z0 = std::sin(t0) * maxR;
+        const float x1 = std::cos(t1) * maxR;
+        const float z1 = std::sin(t1) * maxR;
+        outVerts.push_back({x0, yRim, z0});
+        outVerts.push_back({x1, yRim, z1});
+    }
+}
+
 void drawLineBatch(const std::vector<Vec3>& vertices, unsigned int primitive, const Vec3& color, const Mat4& mvp) {
     if (vertices.empty()) {
         return;
@@ -226,42 +295,6 @@ void drawLineBatch(const std::vector<Vec3>& vertices, unsigned int primitive, co
     glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(vertices.size() * sizeof(Vec3)), vertices.data());
     glDrawArrays(primitive, 0, static_cast<GLsizei>(vertices.size()));
     glBindVertexArray(0);
-}
-
-void drawWorldAxesGizmo(const Mat4& view, int fbw, int fbh) {
-    if (fbw <= 0 || fbh <= 0) {
-        return;
-    }
-
-    const int gizmoSize = std::clamp(std::min(fbw, fbh) / 5, 72, 160);
-    const int gx = 0;
-    const int gy = fbh - gizmoSize;
-
-    Vec3 dx = mat4TransformDirection(view, {1.0f, 0.0f, 0.0f});
-    Vec3 dy = mat4TransformDirection(view, {0.0f, 1.0f, 0.0f});
-    Vec3 dz = mat4TransformDirection(view, {0.0f, 0.0f, 1.0f});
-    dx = normalize(dx);
-    dy = normalize(dy);
-    dz = normalize(dz);
-
-    const float len = 0.82f;
-    const std::vector<Vec3> lineX = {{0.0f, 0.0f, 0.0f}, dx * len};
-    const std::vector<Vec3> lineY = {{0.0f, 0.0f, 0.0f}, dy * len};
-    const std::vector<Vec3> lineZ = {{0.0f, 0.0f, 0.0f}, dz * len};
-
-    const Mat4 ortho = mat4Ortho(-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f);
-
-    glEnable(GL_SCISSOR_TEST);
-    glViewport(gx, gy, gizmoSize, gizmoSize);
-    glScissor(gx, gy, gizmoSize, gizmoSize);
-    glClear(GL_DEPTH_BUFFER_BIT);
-
-    drawLineBatch(lineX, GL_LINES, {0.92f, 0.28f, 0.28f}, ortho);
-    drawLineBatch(lineY, GL_LINES, {0.32f, 0.92f, 0.35f}, ortho);
-    drawLineBatch(lineZ, GL_LINES, {0.28f, 0.5f, 1.0f}, ortho);
-
-    glDisable(GL_SCISSOR_TEST);
-    glViewport(0, 0, fbw, fbh);
 }
 
 void drawVelocityGuides(const Vec3& com, const Vec3& v, float topRadius, const Mat4& mvp) {

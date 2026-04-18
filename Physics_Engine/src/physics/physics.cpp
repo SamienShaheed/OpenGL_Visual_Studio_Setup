@@ -142,21 +142,111 @@ void resetSimulationTuningToDefaults() {
     g_simTuning = SimulationTuning{};
 }
 
-static float rigidBodyLowestColliderBottomY(const RigidBody& body) {
-    float minY = 1.0e30f;
+float arenaFloorSurfaceYAtXZ(float x, float z) {
+    if (!g_simTuning.arenaUseParaboloidBowl) {
+        return g_simTuning.arenaFloorY;
+    }
+    const float k = std::max(0.0f, g_simTuning.bowlCurvatureK);
+    return g_simTuning.arenaFloorY + k * (x * x + z * z);
+}
+
+bool arenaUsesParaboloidBowlArena() {
+    return g_simTuning.arenaUseParaboloidBowl;
+}
+
+bool pointInsideArenaPlayableXZ(float x, float z) {
+    if (g_simTuning.arenaUseParaboloidBowl) {
+        const float R = std::max(1.0f, g_simTuning.bowlMaxRimRadius);
+        return x * x + z * z <= R * R * 1.0001f;
+    }
+    return std::fabs(x) <= g_simTuning.arenaHalfWidth && std::fabs(z) <= g_simTuning.arenaHalfHeight;
+}
+
+bool raycastArenaPlayableFloor(const Vec3& eye, const Vec3& dir, Vec3& outHit) {
+    const float dlen = length(dir);
+    if (dlen < 1.0e-8f) {
+        return false;
+    }
+    const Vec3 d = dir * (1.0f / dlen);
+    if (!g_simTuning.arenaUseParaboloidBowl) {
+        if (std::fabs(d.y) < 1.0e-8f) {
+            return false;
+        }
+        const float t = (g_simTuning.arenaFloorY - eye.y) / d.y;
+        if (t <= 1.0e-4f) {
+            return false;
+        }
+        outHit = eye + d * t;
+        return pointInsideArenaPlayableXZ(outHit.x, outHit.z);
+    }
+    const float y0 = g_simTuning.arenaFloorY;
+    const float k = std::max(0.0f, g_simTuning.bowlCurvatureK);
+    if (k < 1.0e-12f) {
+        if (std::fabs(d.y) < 1.0e-8f) {
+            return false;
+        }
+        const float t = (y0 - eye.y) / d.y;
+        if (t <= 1.0e-4f) {
+            return false;
+        }
+        outHit = eye + d * t;
+        return pointInsideArenaPlayableXZ(outHit.x, outHit.z);
+    }
+    const float A = k * (d.x * d.x + d.z * d.z);
+    const float B = k * 2.0f * (eye.x * d.x + eye.z * d.z) - d.y;
+    const float C = k * (eye.x * eye.x + eye.z * eye.z) - (eye.y - y0);
+
+    auto tryT = [&](float t) -> bool {
+        if (t <= 1.0e-4f) {
+            return false;
+        }
+        const Vec3 p = eye + d * t;
+        if (!pointInsideArenaPlayableXZ(p.x, p.z)) {
+            return false;
+        }
+        outHit = p;
+        return true;
+    };
+
+    if (std::fabs(A) < 1.0e-12f) {
+        if (std::fabs(B) < 1.0e-8f) {
+            return false;
+        }
+        return tryT(-C / B);
+    }
+    const float disc = B * B - 4.0f * A * C;
+    if (disc < 0.0f) {
+        return false;
+    }
+    const float s = std::sqrt(disc);
+    const float inv2A = 1.0f / (2.0f * A);
+    const float t0 = (-B - s) * inv2A;
+    const float t1 = (-B + s) * inv2A;
+    if (tryT(t0)) {
+        return true;
+    }
+    if (tryT(t1)) {
+        return true;
+    }
+    return false;
+}
+
+static bool rigidBodyContactsFloor(const RigidBody& body, float /*floorY*/, float margin) {
+    if (body.collisionSphereCount == 0) {
+        const float by = body.position.y - body.radius;
+        const float surf = arenaFloorSurfaceYAtXZ(body.position.x, body.position.z);
+        return by <= surf + margin;
+    }
     for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
         const CollisionSphere& s = body.collisionSpheres[i];
         const Vec3 wc = body.position + quatRotateVector(body.orientation, s.offsetBody);
-        minY = std::min(minY, wc.y - s.radius);
+        const float bottom = wc.y - s.radius;
+        const float surf = arenaFloorSurfaceYAtXZ(wc.x, wc.z);
+        if (bottom <= surf + margin) {
+            return true;
+        }
     }
-    return minY;
-}
-
-static bool rigidBodyContactsFloor(const RigidBody& body, float floorY, float margin) {
-    if (body.collisionSphereCount == 0) {
-        return body.position.y - body.radius <= floorY + margin;
-    }
-    return rigidBodyLowestColliderBottomY(body) <= floorY + margin;
+    return false;
 }
 
 static void applyCollisionAngularDelta(RigidBody& body, const Vec3& deltaW) {
@@ -230,54 +320,85 @@ void randomizeTopsForMatch() {
 
     const float halfW = g_simTuning.arenaHalfWidth;
     const float halfH = g_simTuning.arenaHalfHeight;
-    const float floorY = g_simTuning.arenaFloorY;
     const float inset = g_simTuning.matchArenaInset;
     const float r0 = a.colliderBoundingRadius;
     const float r1 = b.colliderBoundingRadius;
 
     const float minXZ = std::max(r0 + inset, 1.0f);
-    const float maxX0 = halfW - minXZ;
-    const float maxZ0 = halfH - minXZ;
-    if (maxX0 <= 0.0f || maxZ0 <= 0.0f) {
-        return;
-    }
-
     const float minDistXZ = r0 + r1 + g_simTuning.matchMinSeparationExtra;
-
-    std::uniform_real_distribution<float> ux0(-maxX0, maxX0);
-    std::uniform_real_distribution<float> uz0(-maxZ0, maxZ0);
-    std::uniform_real_distribution<float> ux1(-maxX0, maxX0);
-    std::uniform_real_distribution<float> uz1(-maxZ0, maxZ0);
 
     float x0 = 0.0f;
     float z0 = 0.0f;
     float x1 = 0.0f;
     float z1 = 0.0f;
-    for (int attempt = 0; attempt < 400; ++attempt) {
-        x0 = ux0(rng);
-        z0 = uz0(rng);
-        x1 = ux1(rng);
-        z1 = uz1(rng);
-        const float dx = x1 - x0;
-        const float dz = z1 - z0;
-        if (dx * dx + dz * dz >= minDistXZ * minDistXZ) {
-            break;
+
+    if (g_simTuning.arenaUseParaboloidBowl) {
+        const float Rbowl = std::max(1.0f, g_simTuning.bowlMaxRimRadius);
+        const float maxR = std::max(4.0f, Rbowl - minXZ);
+        std::uniform_real_distribution<float> u01(0.0f, 1.0f);
+        std::uniform_real_distribution<float> uang(0.0f, 6.283185307f);
+        bool ok = false;
+        for (int attempt = 0; attempt < 400; ++attempt) {
+            const float t0 = std::sqrt(u01(rng));
+            const float t1 = std::sqrt(u01(rng));
+            const float ang0 = uang(rng);
+            const float ang1 = uang(rng);
+            x0 = std::cos(ang0) * (t0 * maxR);
+            z0 = std::sin(ang0) * (t0 * maxR);
+            x1 = std::cos(ang1) * (t1 * maxR);
+            z1 = std::sin(ang1) * (t1 * maxR);
+            const float dx = x1 - x0;
+            const float dz = z1 - z0;
+            if (dx * dx + dz * dz >= minDistXZ * minDistXZ) {
+                ok = true;
+                break;
+            }
         }
-    }
-    {
-        const float dx = x1 - x0;
-        const float dz = z1 - z0;
-        if (dx * dx + dz * dz < minDistXZ * minDistXZ) {
-            const float sx = std::min(halfW - minXZ, minDistXZ * 0.55f);
-            x0 = -sx;
+        if (!ok) {
+            const float sep = std::min(maxR * 0.5f, minDistXZ * 0.55f);
+            x0 = -sep;
             z0 = 0.0f;
-            x1 = sx;
+            x1 = sep;
             z1 = 0.0f;
+        }
+    } else {
+        const float maxX0 = halfW - minXZ;
+        const float maxZ0 = halfH - minXZ;
+        if (maxX0 <= 0.0f || maxZ0 <= 0.0f) {
+            return;
+        }
+        std::uniform_real_distribution<float> ux0(-maxX0, maxX0);
+        std::uniform_real_distribution<float> uz0(-maxZ0, maxZ0);
+        std::uniform_real_distribution<float> ux1(-maxX0, maxX0);
+        std::uniform_real_distribution<float> uz1(-maxZ0, maxZ0);
+        for (int attempt = 0; attempt < 400; ++attempt) {
+            x0 = ux0(rng);
+            z0 = uz0(rng);
+            x1 = ux1(rng);
+            z1 = uz1(rng);
+            const float dx = x1 - x0;
+            const float dz = z1 - z0;
+            if (dx * dx + dz * dz >= minDistXZ * minDistXZ) {
+                break;
+            }
+        }
+        {
+            const float dx = x1 - x0;
+            const float dz = z1 - z0;
+            if (dx * dx + dz * dz < minDistXZ * minDistXZ) {
+                const float sx = std::min(halfW - minXZ, minDistXZ * 0.55f);
+                x0 = -sx;
+                z0 = 0.0f;
+                x1 = sx;
+                z1 = 0.0f;
+            }
         }
     }
 
-    a.position = {x0, floorY + r0, z0};
-    b.position = {x1, floorY + r1, z1};
+    const float y0 = arenaFloorSurfaceYAtXZ(x0, z0) + r0;
+    const float y1 = arenaFloorSurfaceYAtXZ(x1, z1) + r1;
+    a.position = {x0, y0, z0};
+    b.position = {x1, y1, z1};
 
     float dx = x1 - x0;
     float dz = z1 - z0;
@@ -927,14 +1048,94 @@ static void resolveCompoundPair(RigidBody& a, RigidBody& b, float dt, int idxA, 
     }
 }
 
+static Vec3 bowlSurfaceNormalAtXZ(float x, float z, float k) {
+    if (k < 1.0e-12f) {
+        return {0.0f, 1.0f, 0.0f};
+    }
+    Vec3 g{-2.0f * k * x, 1.0f, -2.0f * k * z};
+    const float len = length(g);
+    if (len < 1.0e-8f) {
+        return {0.0f, 1.0f, 0.0f};
+    }
+    return g * (1.0f / len);
+}
+
+static void resolveBowlArenaCompound(RigidBody& body, int bodyIndex, float dt) {
+    const float y0 = g_simTuning.arenaFloorY;
+    const float k = std::max(0.0f, g_simTuning.bowlCurvatureK);
+    const float R = std::max(1.0f, g_simTuning.bowlMaxRimRadius);
+
+    float bestBowlPen = 0.0f;
+    std::uint8_t bestBowlI = 0;
+    for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+        const CollisionSphere& s = body.collisionSpheres[i];
+        const Vec3 wc = body.position + quatRotateVector(body.orientation, s.offsetBody);
+        const float d2 = wc.x * wc.x + wc.z * wc.z;
+        const float d = std::sqrt(std::max(0.0f, d2));
+        if (d >= R - 1.0e-3f) {
+            continue;
+        }
+        const float hSurf = y0 + k * d2;
+        const float pen = hSurf - (wc.y - s.radius);
+        if (pen > bestBowlPen) {
+            bestBowlPen = pen;
+            bestBowlI = i;
+        }
+    }
+    if (bestBowlPen > 0.0f) {
+        const CollisionSphere& s = body.collisionSpheres[bestBowlI];
+        const Vec3 wc = body.position + quatRotateVector(body.orientation, s.offsetBody);
+        const Vec3 n = bowlSurfaceNormalAtXZ(wc.x, wc.z, k);
+        const float ny = std::max(std::fabs(n.y), 0.12f);
+        body.position = body.position + n * (bestBowlPen / ny);
+        const Vec3 wc2 = body.position + quatRotateVector(body.orientation, s.offsetBody);
+        const float h2 = y0 + k * (wc2.x * wc2.x + wc2.z * wc2.z);
+        const Vec3 contact{wc2.x, h2, wc2.z};
+        const Vec3 r = contact - body.position;
+        resolveContactImpulses(body, n, r, dt, true, true, bodyIndex, ContactSurfaceKind::Floor);
+    }
+
+    float bestCylPen = 0.0f;
+    std::uint8_t bestCylI = 0;
+    Vec3 cylN{0.0f, 1.0f, 0.0f};
+    for (std::uint8_t i = 0; i < body.collisionSphereCount; ++i) {
+        const CollisionSphere& s = body.collisionSpheres[i];
+        const Vec3 wc = body.position + quatRotateVector(body.orientation, s.offsetBody);
+        const float d2 = wc.x * wc.x + wc.z * wc.z;
+        const float d = std::sqrt(std::max(0.0f, d2));
+        if (d < 1.0e-6f) {
+            continue;
+        }
+        const float pen = (d + s.radius) - R;
+        if (pen > bestCylPen) {
+            bestCylPen = pen;
+            bestCylI = i;
+            cylN = Vec3{-wc.x / d, 0.0f, -wc.z / d};
+        }
+    }
+    if (bestCylPen > 0.0f) {
+        body.position = body.position + cylN * bestCylPen;
+        const CollisionSphere& s = body.collisionSpheres[bestCylI];
+        const Vec3 wc = body.position + quatRotateVector(body.orientation, s.offsetBody);
+        const float d2 = wc.x * wc.x + wc.z * wc.z;
+        const float d = std::sqrt(std::max(d2, 1.0e-8f));
+        const Vec3 contact{R * (wc.x / d), wc.y, R * (wc.z / d)};
+        const Vec3 r = contact - body.position;
+        resolveContactImpulses(body, cylN, r, dt, false, false, bodyIndex, ContactSurfaceKind::Wall);
+    }
+}
 
 static void integrateRigidBodyTranslation(RigidBody& body, float dt, int bodyIndex) {
     body.linearVelocity = body.linearVelocity + g_simTuning.gravity * dt;
     body.position = body.position + body.linearVelocity * dt;
 
-    resolvePlaneContactCompound(body, bodyIndex, g_simTuning.arenaFloorY, dt);
-    resolveArenaWallsCompound(
-        body, bodyIndex, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight, dt);
+    if (g_simTuning.arenaUseParaboloidBowl) {
+        resolveBowlArenaCompound(body, bodyIndex, dt);
+    } else {
+        resolvePlaneContactCompound(body, bodyIndex, g_simTuning.arenaFloorY, dt);
+        resolveArenaWallsCompound(
+            body, bodyIndex, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight, dt);
+    }
 }
 
 static void integrateRigidBodyOrientation(RigidBody& body, float dt) {

@@ -17,18 +17,6 @@ namespace {
 
 constexpr float kPerspectiveFovY = 1.0472f;
 
-bool rayIntersectPlaneY(const Vec3& eye, const Vec3& rayDir, float planeY, Vec3& outHit) {
-    if (std::fabs(rayDir.y) < 1.0e-8f) {
-        return false;
-    }
-    const float t = (planeY - eye.y) / rayDir.y;
-    if (t < 0.0f) {
-        return false;
-    }
-    outHit = eye + rayDir * t;
-    return true;
-}
-
 // World-space ray direction through pixel (mx, my) for orbit camera (same construction as proj * view).
 Vec3 rayDirFromPixel(
     int fbw,
@@ -60,19 +48,15 @@ bool pickPointOnArenaFloor(
     double my,
     const Vec3& eye,
     const Vec3& target,
-    float floorY,
     Vec3& out) {
     const Vec3 dir = rayDirFromPixel(fbw, fbh, mx, my, eye, target);
-    return rayIntersectPlaneY(eye, dir, floorY, out);
-}
-
-bool pointInsideArenaXZ(float x, float z) {
-    return std::fabs(x) <= g_simTuning.arenaHalfWidth && std::fabs(z) <= g_simTuning.arenaHalfHeight;
+    return raycastArenaPlayableFloor(eye, dir, out);
 }
 
 void resetLaunchableTopForSlingshot() {
     RigidBody& b = launchableTop();
-    b.position = {0.0f, g_simTuning.arenaFloorY + b.colliderBoundingRadius, 0.0f};
+    const float y = arenaFloorSurfaceYAtXZ(0.0f, 0.0f) + b.colliderBoundingRadius;
+    b.position = {0.0f, y, 0.0f};
     b.linearVelocity = {0.0f, 0.0f, 0.0f};
     b.angularVelocity = {0.0f, 0.0f, 0.0f};
     b.orientation = {1.0f, 0.0f, 0.0f, 0.0f};
@@ -81,14 +65,23 @@ void resetLaunchableTopForSlingshot() {
 static void rebuildArenaMeshes(std::vector<Vec3>& arenaFloorVerts, std::vector<Vec3>& arenaWallVerts) {
     arenaFloorVerts.clear();
     arenaWallVerts.clear();
-    arenaFloorVerts.reserve(5000);
-    appendArenaGrid(arenaFloorVerts, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight,
-        g_simTuning.arenaFloorY, 36);
-    appendArenaBorder(arenaFloorVerts, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight,
-        g_simTuning.arenaFloorY);
-    arenaWallVerts.reserve(3000);
-    appendArenaWallFrame(arenaWallVerts, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight,
-        g_simTuning.arenaFloorY, g_simTuning.arenaWallHeight);
+    if (g_simTuning.arenaUseParaboloidBowl) {
+        arenaFloorVerts.reserve(8000);
+        arenaWallVerts.reserve(4000);
+        appendBowlParaboloidWireframe(arenaFloorVerts, g_simTuning.arenaFloorY, g_simTuning.bowlCurvatureK,
+            g_simTuning.bowlMaxRimRadius, 28, 18);
+        appendBowlRimWallFrame(arenaWallVerts, g_simTuning.arenaFloorY, g_simTuning.bowlCurvatureK,
+            g_simTuning.bowlMaxRimRadius, g_simTuning.arenaWallHeight, 48);
+    } else {
+        arenaFloorVerts.reserve(5000);
+        appendArenaGrid(arenaFloorVerts, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight,
+            g_simTuning.arenaFloorY, 36);
+        appendArenaBorder(arenaFloorVerts, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight,
+            g_simTuning.arenaFloorY);
+        arenaWallVerts.reserve(3000);
+        appendArenaWallFrame(arenaWallVerts, g_simTuning.arenaHalfWidth, g_simTuning.arenaHalfHeight,
+            g_simTuning.arenaFloorY, g_simTuning.arenaWallHeight);
+    }
 }
 
 static void rebuildArenaIfDirty(std::vector<Vec3>& floor, std::vector<Vec3>& wall) {
@@ -96,14 +89,22 @@ static void rebuildArenaIfDirty(std::vector<Vec3>& floor, std::vector<Vec3>& wal
     static float h = -1.0f;
     static float fy = 1.0e10f;
     static float wallH = -1.0f;
+    static bool bowl = false;
+    static float bowlK = -1.0f;
+    static float bowlR = -1.0f;
     if (w == g_simTuning.arenaHalfWidth && h == g_simTuning.arenaHalfHeight
-        && fy == g_simTuning.arenaFloorY && wallH == g_simTuning.arenaWallHeight) {
+        && fy == g_simTuning.arenaFloorY && wallH == g_simTuning.arenaWallHeight
+        && bowl == g_simTuning.arenaUseParaboloidBowl && bowlK == g_simTuning.bowlCurvatureK
+        && bowlR == g_simTuning.bowlMaxRimRadius) {
         return;
     }
     w = g_simTuning.arenaHalfWidth;
     h = g_simTuning.arenaHalfHeight;
     fy = g_simTuning.arenaFloorY;
     wallH = g_simTuning.arenaWallHeight;
+    bowl = g_simTuning.arenaUseParaboloidBowl;
+    bowlK = g_simTuning.bowlCurvatureK;
+    bowlR = g_simTuning.bowlMaxRimRadius;
     rebuildArenaMeshes(floor, wall);
 }
 
@@ -197,12 +198,11 @@ int main() {
         s_prevX = xDown;
 
         Vec3 floorHit{};
-        const bool hasFloorHit = fbw > 0 && fbh > 0
-            && pickPointOnArenaFloor(
-                   fbw, fbh, mx, my, cameraPos, g_cameraTarget, g_simTuning.arenaFloorY, floorHit);
+        const bool hasFloorHit =
+            fbw > 0 && fbh > 0 && pickPointOnArenaFloor(fbw, fbh, mx, my, cameraPos, g_cameraTarget, floorHit);
 
         if (zDown && !s_prevZ) {
-            if (hasFloorHit && pointInsideArenaXZ(floorHit.x, floorHit.z)) {
+            if (hasFloorHit && pointInsideArenaPlayableXZ(floorHit.x, floorHit.z)) {
                 resetLaunchableTopForSlingshot();
                 s_launchSpinY = g_simTuning.defaultTopSpinY;
                 s_zDragActive = true;
@@ -343,26 +343,26 @@ int main() {
         if (draggingZLaunch) {
             std::vector<Vec3> dragPreview;
             dragPreview.reserve(4);
-            dragPreview.push_back({s_dragStart.x, g_simTuning.arenaFloorY, s_dragStart.z});
-            dragPreview.push_back({s_dragCurrent.x, g_simTuning.arenaFloorY, s_dragCurrent.z});
+            const float yStart = arenaFloorSurfaceYAtXZ(s_dragStart.x, s_dragStart.z);
+            const float yCur = arenaFloorSurfaceYAtXZ(s_dragCurrent.x, s_dragCurrent.z);
+            dragPreview.push_back({s_dragStart.x, yStart, s_dragStart.z});
+            dragPreview.push_back({s_dragCurrent.x, yCur, s_dragCurrent.z});
             const Vec3 delta = {s_dragCurrent.x - s_dragStart.x, 0.0f, s_dragCurrent.z - s_dragStart.z};
             const float d = length(delta);
             if (d > 1.0e-4f) {
                 const Vec3 dir = delta * (1.0f / d);
                 const Vec3 launchDir = {-dir.x, 0.0f, -dir.z};
                 const float arrowLen = std::min(40.0f + 0.15f * d, 180.0f);
-                const Vec3 arrowStart = {s_dragCurrent.x, g_simTuning.arenaFloorY, s_dragCurrent.z};
+                const Vec3 arrowStart = {s_dragCurrent.x, yCur, s_dragCurrent.z};
                 const Vec3 arrowEnd = {
                     arrowStart.x + launchDir.x * arrowLen,
-                    g_simTuning.arenaFloorY,
+                    yCur,
                     arrowStart.z + launchDir.z * arrowLen};
                 dragPreview.push_back(arrowStart);
                 dragPreview.push_back(arrowEnd);
             }
             drawLineBatch(dragPreview, GL_LINES, {0.95f, 0.35f, 0.95f}, mvp);
         }
-
-        drawWorldAxesGizmo(view, fbw, fbh);
 
         debugOverlayDrawHud(
             frameDt,
@@ -371,6 +371,7 @@ int main() {
             draggingZLaunch,
             s_launchSpinY);
         debugOverlayDrawTuningPanel();
+        debugOverlayDrawOrientationGizmo(view, fbw, fbh);
         debugOverlayRenderDrawData();
 
         glfwSwapBuffers(window);

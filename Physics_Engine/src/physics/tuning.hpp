@@ -15,6 +15,11 @@ struct SimulationTuning {
     float arenaHalfHeight = 300.0f;
     float arenaFloorY = 0.0f;
     float arenaWallHeight = 120.0f;
+    // Paraboloid bowl: y = arenaFloorY + bowlCurvatureK * (x^2+z^2), clipped at horizontal radius bowlMaxRimRadius.
+    // When false, use flat arenaFloorY plane + axis-aligned walls (arenaHalfWidth / arenaHalfHeight).
+    bool arenaUseParaboloidBowl = true;
+    float bowlCurvatureK = 3.8e-4f;
+    float bowlMaxRimRadius = 400.0f;
 
     float defaultTopSpinY = 14.0f;
 
