@@ -19,3 +19,4 @@ void debugOverlayDrawTuningPanel();
 void debugOverlayRenderDrawData();
 
 bool debugOverlayWantsMouseCapture();
+bool debugOverlayWantsKeyboardCapture();

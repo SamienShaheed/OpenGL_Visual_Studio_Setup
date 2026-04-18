@@ -5,9 +5,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <random>
 #include <vector>
 
 SimulationTuning g_simTuning{};
+
+// After X random match: suppress linear air drag and reduce floor/wall friction until first contact / timeout.
+static int s_matchApproachGraceSubsteps = 0;
 
 std::vector<RigidBody> g_rigidBodies = {
     {
@@ -64,6 +68,108 @@ void syncRigidBodiesFromTuning() {
 
 void resetSimulationTuningToDefaults() {
     g_simTuning = SimulationTuning{};
+}
+
+static void applyAirAndAngularDamping(RigidBody& body, float dt) {
+    const float ad = g_simTuning.angularDampingPerSecond;
+    if (ad > 0.0f) {
+        const float s = std::max(0.0f, 1.0f - ad * dt);
+        body.angularVelocity = body.angularVelocity * s;
+    }
+    const float ld = g_simTuning.linearAirDragPerSecond;
+    if (ld > 0.0f && s_matchApproachGraceSubsteps <= 0) {
+        const float s = std::max(0.0f, 1.0f - ld * dt);
+        body.linearVelocity.x *= s;
+        body.linearVelocity.z *= s;
+    }
+    const float vy = g_simTuning.linearVerticalAirDragPerSecond;
+    if (vy > 0.0f && s_matchApproachGraceSubsteps <= 0) {
+        body.linearVelocity.y *= std::max(0.0f, 1.0f - vy * dt);
+    }
+}
+
+void randomizeTopsForMatch() {
+    if (g_rigidBodies.size() < 2) {
+        return;
+    }
+    thread_local std::mt19937 rng(std::random_device{}());
+
+    RigidBody& a = g_rigidBodies[0];
+    RigidBody& b = g_rigidBodies[1];
+
+    const float halfW = g_simTuning.arenaHalfWidth;
+    const float halfH = g_simTuning.arenaHalfHeight;
+    const float floorY = g_simTuning.arenaFloorY;
+    const float inset = g_simTuning.matchArenaInset;
+    const float r0 = a.radius;
+    const float r1 = b.radius;
+
+    const float minXZ = std::max(r0 + inset, 1.0f);
+    const float maxX0 = halfW - minXZ;
+    const float maxZ0 = halfH - minXZ;
+    if (maxX0 <= 0.0f || maxZ0 <= 0.0f) {
+        return;
+    }
+
+    const float minDistXZ = r0 + r1 + g_simTuning.matchMinSeparationExtra;
+
+    std::uniform_real_distribution<float> ux0(-maxX0, maxX0);
+    std::uniform_real_distribution<float> uz0(-maxZ0, maxZ0);
+    std::uniform_real_distribution<float> ux1(-maxX0, maxX0);
+    std::uniform_real_distribution<float> uz1(-maxZ0, maxZ0);
+
+    float x0 = 0.0f;
+    float z0 = 0.0f;
+    float x1 = 0.0f;
+    float z1 = 0.0f;
+    for (int attempt = 0; attempt < 400; ++attempt) {
+        x0 = ux0(rng);
+        z0 = uz0(rng);
+        x1 = ux1(rng);
+        z1 = uz1(rng);
+        const float dx = x1 - x0;
+        const float dz = z1 - z0;
+        if (dx * dx + dz * dz >= minDistXZ * minDistXZ) {
+            break;
+        }
+    }
+    {
+        const float dx = x1 - x0;
+        const float dz = z1 - z0;
+        if (dx * dx + dz * dz < minDistXZ * minDistXZ) {
+            const float sx = std::min(halfW - minXZ, minDistXZ * 0.55f);
+            x0 = -sx;
+            z0 = 0.0f;
+            x1 = sx;
+            z1 = 0.0f;
+        }
+    }
+
+    a.position = {x0, floorY + r0, z0};
+    b.position = {x1, floorY + r1, z1};
+
+    float dx = x1 - x0;
+    float dz = z1 - z0;
+    float lenXZ = std::sqrt(dx * dx + dz * dz);
+    if (lenXZ < 1.0e-4f) {
+        dx = 1.0f;
+        dz = 0.0f;
+        lenXZ = 1.0f;
+    }
+    const Vec3 dir = {dx / lenXZ, 0.0f, dz / lenXZ};
+    const float speed = g_simTuning.matchInitialClosingSpeed;
+    a.linearVelocity = {dir.x * speed, 0.0f, dir.z * speed};
+    b.linearVelocity = {-dir.x * speed, 0.0f, -dir.z * speed};
+
+    std::uniform_real_distribution<float> spinY(-g_simTuning.matchSpinAbsMax, g_simTuning.matchSpinAbsMax);
+    std::uniform_real_distribution<float> tilt(-g_simTuning.matchSpinTiltMax, g_simTuning.matchSpinTiltMax);
+    a.angularVelocity = {tilt(rng), spinY(rng), tilt(rng)};
+    b.angularVelocity = {tilt(rng), spinY(rng), tilt(rng)};
+
+    a.orientation = {1.0f, 0.0f, 0.0f, 0.0f};
+    b.orientation = {1.0f, 0.0f, 0.0f, 0.0f};
+
+    s_matchApproachGraceSubsteps = g_simTuning.matchApproachGraceSubsteps;
 }
 
 static bool frictionSaturated(float jtFree, float jMax) {
@@ -206,8 +312,12 @@ static void resolveContactImpulses(
     const float jtFree = -dot(vRel, t) / denomT;
 
     const float gravitySupportImpulse = body.mass * length(g_simTuning.gravity) * dt * 0.45f;
-    const float jMax = g_simTuning.frictionMuFloor
+    float jMax = g_simTuning.frictionMuFloor
         * (useGravityFrictionCap ? std::max(jnApplied, gravitySupportImpulse) : jnApplied);
+    if (s_matchApproachGraceSubsteps > 0
+        && (surfaceKind == ContactSurfaceKind::Floor || surfaceKind == ContactSurfaceKind::Wall)) {
+        jMax *= g_simTuning.matchApproachFrictionScale;
+    }
 
     const float jt = std::clamp(jtFree, -jMax, jMax);
     applyImpulse(t * jt);
@@ -346,6 +456,18 @@ static void resolveSphereSpherePair(RigidBody& a, RigidBody& b, float dt, int id
         applyImpulseAtContact(b, rB, n * (-jn));
     }
 
+    if (g_simTuning.sphereSphereSeekAccel > 0.0f) {
+        Vec3 rab = b.position - a.position;
+        rab.y = 0.0f;
+        const float lr = length(rab);
+        if (lr > 1.0e-4f) {
+            const Vec3 seek = rab * (1.0f / lr);
+            const float jSeek = g_simTuning.sphereSphereSeekAccel * dt;
+            applyImpulseAtContact(a, rA, seek * (a.mass * jSeek));
+            applyImpulseAtContact(b, rB, seek * (-b.mass * jSeek));
+        }
+    }
+
     vRel = a.linearVelocity + cross(a.angularVelocity, rA) - b.linearVelocity - cross(b.angularVelocity, rB);
     Vec3 vT = vRel - n * dot(vRel, n);
     const float vtLen = length(vT);
@@ -377,7 +499,12 @@ static void resolveSphereSpherePair(RigidBody& a, RigidBody& b, float dt, int id
     // they “stick” and slide. Use a small resting normal only when there was no collision impulse.
     const float minMass = std::min(a.mass, b.mass);
     const float restingNormalImpulse = minMass * length(g_simTuning.gravity) * dt * 0.06f;
-    const float jMax = g_simTuning.sphereSphereFrictionMu * std::max(jnAbs, restingNormalImpulse);
+    const float jMaxBase = g_simTuning.sphereSphereFrictionMu * std::max(jnAbs, restingNormalImpulse);
+    const float slipNorm =
+        vtLen / (g_simTuning.sphereSphereSlipRef + 1.0e-5f);
+    const float slipBoost =
+        1.0f + g_simTuning.sphereSphereSlipBoost * std::min(slipNorm, g_simTuning.sphereSphereSlipBoostMax);
+    const float jMax = jMaxBase * slipBoost;
 
     const float jt = std::clamp(jtFree, -jMax, jMax);
     applyImpulseAtContact(a, rA, t * jt);
@@ -447,5 +574,10 @@ void physicsFixedSubstep(float dt, bool skipLaunchableBody) {
             continue;
         }
         integrateRigidBodyOrientation(g_rigidBodies[i], dt);
+        applyAirAndAngularDamping(g_rigidBodies[i], dt);
+    }
+
+    if (s_matchApproachGraceSubsteps > 0) {
+        --s_matchApproachGraceSubsteps;
     }
 }

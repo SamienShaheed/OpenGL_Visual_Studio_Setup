@@ -8,8 +8,8 @@ struct SimulationTuning {
 
     float contactRestitution = 0.68f;
     float frictionMuFloor = 0.42f;
-    float sphereSphereRestitution = 0.82f;
-    float sphereSphereFrictionMu = 0.14f;
+    float sphereSphereRestitution = 0.88f;
+    float sphereSphereFrictionMu = 0.22f;
 
     float arenaHalfWidth = 450.0f;
     float arenaHalfHeight = 300.0f;
@@ -31,7 +31,28 @@ struct SimulationTuning {
     float inertiaSpinFactor = 0.55f;
     float inertiaTransFactor = 0.32f;
 
-    int sphereSphereIterations = 4;
+    int sphereSphereIterations = 6;
+
+    // B: spin / translation decay (per second; 0 = off).
+    float angularDampingPerSecond = 0.15f;
+    float linearAirDragPerSecond = 0.04f;
+    float linearVerticalAirDragPerSecond = 0.04f;
+
+    // A: X key random match — equal closing speed, random spins.
+    float matchInitialClosingSpeed = 340.0f;
+    float matchSpinAbsMax = 36.0f;
+    float matchSpinTiltMax = 5.0f;
+    float matchArenaInset = 14.0f;
+    float matchMinSeparationExtra = 35.0f;
+    // After X: skip horizontal air drag for N substeps; scale floor/wall tangential friction (so tops reach each other).
+    int matchApproachGraceSubsteps = 260;
+    float matchApproachFrictionScale = 0.38f;
+
+    // C: extra tangential coupling when sliding fast + arcade “seek” along XZ.
+    float sphereSphereSlipRef = 48.0f;
+    float sphereSphereSlipBoost = 0.45f;
+    float sphereSphereSlipBoostMax = 2.5f;
+    float sphereSphereSeekAccel = 12.0f;
 
     float body0Mass = 1.0f;
     float body1Mass = 1.0f;

@@ -105,6 +105,9 @@ void recomputeBeybladeInertia(RigidBody& body);
 void syncRigidBodiesFromTuning();
 void resetSimulationTuningToDefaults();
 
+// Randomize both tops in arena: XZ positions, random spins, equal closing speed toward each other.
+void randomizeTopsForMatch();
+
 struct LaunchIntent {
     // Horizontal velocity after launch (world XZ; y ignored).
     Vec3 horizontalVelocity{};

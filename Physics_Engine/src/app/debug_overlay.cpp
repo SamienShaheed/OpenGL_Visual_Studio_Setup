@@ -111,6 +111,7 @@ void debugOverlayDrawHud(
     ImGui::Separator();
     ImGui::Text("Z-launch drag:   %s", draggingZLaunch ? "yes" : "no");
     ImGui::Text("Launch spin wy:  %.2f rad/s ( [ ] )", static_cast<double>(launchSpinY));
+    ImGui::TextDisabled("X: random match (positions, spins, head-on)");
 
     ImGui::End();
 }
@@ -130,6 +131,10 @@ void debugOverlayDrawTuningPanel() {
     ImGui::SliderFloat("Sphere restitution", &g_simTuning.sphereSphereRestitution, 0.0f, 1.0f);
     ImGui::SliderFloat("Sphere friction mu", &g_simTuning.sphereSphereFrictionMu, 0.0f, 2.0f);
     ImGui::SliderInt("Sphere-sphere iterations", &g_simTuning.sphereSphereIterations, 1, 16);
+    ImGui::DragFloat("SS slip ref (m/s)", &g_simTuning.sphereSphereSlipRef, 1.0f, 5.0f, 200.0f);
+    ImGui::SliderFloat("SS slip boost", &g_simTuning.sphereSphereSlipBoost, 0.0f, 2.0f);
+    ImGui::DragFloat("SS slip norm cap", &g_simTuning.sphereSphereSlipBoostMax, 0.1f, 0.5f, 8.0f);
+    ImGui::DragFloat("SS seek accel", &g_simTuning.sphereSphereSeekAccel, 0.5f, 0.0f, 80.0f);
 
     ImGui::SeparatorText("Arena");
     ImGui::DragFloat("Half width (X)", &g_simTuning.arenaHalfWidth, 1.0f, 50.0f, 2000.0f);
@@ -162,6 +167,20 @@ void debugOverlayDrawTuningPanel() {
     ImGui::DragFloat("Spin factor", &g_simTuning.inertiaSpinFactor, 0.01f, 0.05f, 1.0f);
     ImGui::DragFloat("Trans factor", &g_simTuning.inertiaTransFactor, 0.01f, 0.05f, 1.0f);
 
+    ImGui::SeparatorText("Damping / drag");
+    ImGui::DragFloat("Angular damping (/s)", &g_simTuning.angularDampingPerSecond, 0.02f, 0.0f, 5.0f);
+    ImGui::DragFloat("Linear drag XZ (/s)", &g_simTuning.linearAirDragPerSecond, 0.02f, 0.0f, 3.0f);
+    ImGui::DragFloat("Linear drag Y (/s)", &g_simTuning.linearVerticalAirDragPerSecond, 0.02f, 0.0f, 3.0f);
+
+    ImGui::SeparatorText("X random match");
+    ImGui::DragFloat("Closing speed", &g_simTuning.matchInitialClosingSpeed, 5.0f, 20.0f, 800.0f);
+    ImGui::DragInt("Approach grace (substeps)", &g_simTuning.matchApproachGraceSubsteps, 1, 0, 600);
+    ImGui::SliderFloat("Approach friction scale", &g_simTuning.matchApproachFrictionScale, 0.05f, 1.0f);
+    ImGui::DragFloat("Spin abs max (rad/s)", &g_simTuning.matchSpinAbsMax, 1.0f, 0.0f, 80.0f);
+    ImGui::DragFloat("Spin tilt max (rad/s)", &g_simTuning.matchSpinTiltMax, 0.25f, 0.0f, 30.0f);
+    ImGui::DragFloat("Arena inset", &g_simTuning.matchArenaInset, 1.0f, 0.0f, 80.0f);
+    ImGui::DragFloat("Min sep extra", &g_simTuning.matchMinSeparationExtra, 1.0f, 0.0f, 200.0f);
+
     if (ImGui::Button("Reset all to defaults")) {
         resetSimulationTuningToDefaults();
         syncRigidBodiesFromTuning();
@@ -177,4 +196,8 @@ void debugOverlayRenderDrawData() {
 
 bool debugOverlayWantsMouseCapture() {
     return ImGui::GetIO().WantCaptureMouse;
+}
+
+bool debugOverlayWantsKeyboardCapture() {
+    return ImGui::GetIO().WantCaptureKeyboard;
 }

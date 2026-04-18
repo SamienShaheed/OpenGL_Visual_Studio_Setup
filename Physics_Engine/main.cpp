@@ -154,6 +154,7 @@ int main() {
     rebuildArenaMeshes(arenaFloorVerts, arenaWallVerts);
 
     bool s_prevZ = false;
+    bool s_prevX = false;
     bool s_zDragActive = false;
     Vec3 s_dragStart{};
     Vec3 s_dragCurrent{};
@@ -184,6 +185,16 @@ int main() {
         };
 
         const bool zDown = glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS;
+        const bool xDown = glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS;
+        if (!debugOverlayWantsKeyboardCapture()) {
+            if (xDown && !s_prevX) {
+                randomizeTopsForMatch();
+                g_fixedStepAccumulator = 0.0f;
+                s_zDragActive = false;
+                s_launchSpinY = g_simTuning.defaultTopSpinY;
+            }
+        }
+        s_prevX = xDown;
 
         Vec3 floorHit{};
         const bool hasFloorHit = fbw > 0 && fbh > 0
