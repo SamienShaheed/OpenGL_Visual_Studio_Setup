@@ -1,4 +1,4 @@
-# Physics Engine (3D prototype)
+# Physics Engine (Beyblade Simulator)
 
 A **Windows / C++ / OpenGL** playground for a **fixed-timestep rigid-body simulation** with compound sphere colliders (Beyblade-style tops), an optional **paraboloid bowl arena**, **Dear ImGui** tuning panels, and a **GLFW** window with wireframe debug drawing.
 
