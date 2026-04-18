@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <vector>
 
 namespace {
 
@@ -142,6 +143,22 @@ void appendArenaBorder(std::vector<Vec3>& outVerts, float halfW, float halfD, fl
     }
 }
 
+void appendArenaWallFrame(std::vector<Vec3>& outVerts, float halfW, float halfD, float floorY, float wallHeight) {
+    const float y0 = floorY;
+    const float y1 = floorY + wallHeight;
+    const std::vector<Vec3> corners = {
+        {-halfW, y0, -halfD},
+        {halfW, y0, -halfD},
+        {halfW, y0, halfD},
+        {-halfW, y0, halfD}
+    };
+    for (const Vec3& c : corners) {
+        outVerts.push_back(c);
+        outVerts.push_back({c.x, y1, c.z});
+    }
+    appendArenaBorder(outVerts, halfW, halfD, y1);
+}
+
 void drawLineBatch(const std::vector<Vec3>& vertices, unsigned int primitive, const Vec3& color, const Mat4& mvp) {
     if (vertices.empty()) {
         return;
@@ -191,4 +208,40 @@ void drawWorldAxesGizmo(const Mat4& view, int fbw, int fbh) {
 
     glDisable(GL_SCISSOR_TEST);
     glViewport(0, 0, fbw, fbh);
+}
+
+void drawVelocityGuides(const Vec3& com, const Vec3& v, float topRadius, const Mat4& mvp) {
+    const float speed = length(v);
+    constexpr float kHideBelow = 0.32f;
+    if (speed < kHideBelow) {
+        return;
+    }
+
+    const Vec3 dir = v * (1.0f / speed);
+    const float mainLen =
+        std::clamp(topRadius * 0.88f + speed * 0.044f, topRadius * 0.75f, topRadius * 5.0f);
+    const std::vector<Vec3> totalVel = {com, com + dir * mainLen};
+    drawLineBatch(totalVel, GL_LINES, {1.0f, 0.45f, 0.1f}, mvp);
+
+    const Vec3 vxz = {v.x, 0.0f, v.z};
+    const float horizSpeed = length(vxz);
+    // Gold line = horizontal (XZ) part only at COM height. Skip when motion is already horizontal (would
+    // duplicate the orange arrow) or when vertical motion is negligible.
+    if (horizSpeed >= 0.26f && std::fabs(v.y) > 0.14f) {
+        const Vec3 hdir = vxz * (1.0f / horizSpeed);
+        const float hLen =
+            std::clamp(topRadius * 0.48f + horizSpeed * 0.042f, topRadius * 0.4f, topRadius * 4.8f);
+        const Vec3 slideEnd = com + hdir * hLen;
+        const std::vector<Vec3> slideLine = {com, slideEnd};
+        drawLineBatch(slideLine, GL_LINES, {0.98f, 0.78f, 0.28f}, mvp);
+    }
+
+    const float vy = v.y;
+    if (std::fabs(vy) >= 0.22f) {
+        const float vyLen =
+            std::clamp(std::fabs(vy) * 0.16f, topRadius * 0.15f, topRadius * 1.75f) * (vy >= 0.0f ? 1.0f : -1.0f);
+        const Vec3 vyEnd = {com.x, com.y + vyLen, com.z};
+        const std::vector<Vec3> vertTick = {com, vyEnd};
+        drawLineBatch(vertTick, GL_LINES, {0.35f, 0.8f, 1.0f}, mvp);
+    }
 }

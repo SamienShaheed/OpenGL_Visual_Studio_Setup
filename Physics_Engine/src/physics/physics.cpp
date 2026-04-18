@@ -4,30 +4,39 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
-RigidBody g_top = {
-    {0.0f, kTopRadius, 0.0f},
-    {0.0f, 0.0f, 0.0f},
-    {0.0f, 14.0f, 1.5f},
-    {1.0f, 0.0f, 0.0f, 0.0f},
-    1.0f,
-    {0.0f, 0.0f, 0.0f}
+std::vector<RigidBody> g_rigidBodies = {
+    {
+        {0.0f, kTopRadius, 0.0f},
+        {0.0f, 0.0f, 0.0f},
+        {0.0f, kTopSpinAboutWorldY, 0.0f},
+        {1.0f, 0.0f, 0.0f, 0.0f},
+        1.0f,
+        {0.0f, 0.0f, 0.0f},
+        kTopRadius,
+    },
+    {
+        {180.0f, kTopRadius, 80.0f},
+        {-90.0f, 0.0f, 55.0f},
+        {0.8f, 12.0f, 2.0f},
+        {1.0f, 0.0f, 0.0f, 0.0f},
+        1.0f,
+        {0.0f, 0.0f, 0.0f},
+        kTopRadius,
+    },
 };
 
 float g_fixedStepAccumulator = 0.0f;
 
-static void resolvePlaneContact(RigidBody& body, float planeY, float ballRadius, float dt) {
-    const Vec3 n = {0.0f, 1.0f, 0.0f};
-    const float bottomY = body.position.y - ballRadius;
-    if (bottomY > planeY) {
-        return;
-    }
-
-    const float penetration = planeY - bottomY;
-    body.position = body.position + n * penetration;
-
-    const Vec3 r = n * (-ballRadius);
-
+// n: unit normal from solid into arena (air). r: COM -> contact on body (world).
+static void resolveContactImpulses(
+    RigidBody& body,
+    const Vec3& n,
+    const Vec3& r,
+    float dt,
+    bool dampGroundTilt,
+    bool useGravityFrictionCap) {
     auto applyImpulse = [&](const Vec3& impulse) {
         body.linearVelocity = body.linearVelocity + impulse * (1.0f / body.mass);
         body.angularVelocity =
@@ -70,20 +79,86 @@ static void resolvePlaneContact(RigidBody& body, float planeY, float ballRadius,
     const float jtFree = -dot(vRel, t) / denomT;
 
     const float gravitySupportImpulse = body.mass * length(kGravity) * dt * 0.45f;
-    const float jMax = kFrictionMu * std::max(jnApplied, gravitySupportImpulse);
+    const float jMax = kFrictionMu * (useGravityFrictionCap ? std::max(jnApplied, gravitySupportImpulse) : jnApplied);
 
     const float jt = std::clamp(jtFree, -jMax, jMax);
     applyImpulse(t * jt);
 
-    body.angularVelocity.x *= 0.985f;
-    body.angularVelocity.z *= 0.985f;
+    if (dampGroundTilt) {
+        body.angularVelocity.x *= 0.985f;
+        body.angularVelocity.z *= 0.985f;
+    }
+}
+
+static void resolvePlaneContact(RigidBody& body, float planeY, float ballRadius, float dt) {
+    const Vec3 n = {0.0f, 1.0f, 0.0f};
+    const float bottomY = body.position.y - ballRadius;
+    if (bottomY > planeY) {
+        return;
+    }
+
+    const float penetration = planeY - bottomY;
+    body.position = body.position + n * penetration;
+
+    const Vec3 r = n * (-ballRadius);
+    resolveContactImpulses(body, n, r, dt, true, true);
+}
+
+static void resolveArenaWalls(RigidBody& body, float ballRadius, float halfW, float halfD, float dt) {
+    const auto wallX = [&](bool positiveSide) {
+        const Vec3 n = positiveSide ? Vec3{-1.0f, 0.0f, 0.0f} : Vec3{1.0f, 0.0f, 0.0f};
+        float penetration = 0.0f;
+        if (positiveSide) {
+            const float limit = halfW;
+            if (body.position.x + ballRadius <= limit) {
+                return;
+            }
+            penetration = body.position.x + ballRadius - limit;
+        } else {
+            const float limit = -halfW;
+            if (body.position.x - ballRadius >= limit) {
+                return;
+            }
+            penetration = limit - (body.position.x - ballRadius);
+        }
+        body.position = body.position + n * penetration;
+        const Vec3 r = n * (-ballRadius);
+        resolveContactImpulses(body, n, r, dt, false, false);
+    };
+
+    const auto wallZ = [&](bool positiveSide) {
+        const Vec3 n = positiveSide ? Vec3{0.0f, 0.0f, -1.0f} : Vec3{0.0f, 0.0f, 1.0f};
+        float penetration = 0.0f;
+        if (positiveSide) {
+            const float limit = halfD;
+            if (body.position.z + ballRadius <= limit) {
+                return;
+            }
+            penetration = body.position.z + ballRadius - limit;
+        } else {
+            const float limit = -halfD;
+            if (body.position.z - ballRadius >= limit) {
+                return;
+            }
+            penetration = limit - (body.position.z - ballRadius);
+        }
+        body.position = body.position + n * penetration;
+        const Vec3 r = n * (-ballRadius);
+        resolveContactImpulses(body, n, r, dt, false, false);
+    };
+
+    wallX(true);
+    wallX(false);
+    wallZ(true);
+    wallZ(false);
 }
 
 void integrateRigidBody(RigidBody& body, float dt) {
     body.linearVelocity = body.linearVelocity + kGravity * dt;
     body.position = body.position + body.linearVelocity * dt;
 
-    resolvePlaneContact(body, kArenaFloorY, kTopRadius, dt);
+    resolvePlaneContact(body, kArenaFloorY, body.radius, dt);
+    resolveArenaWalls(body, body.radius, kArenaHalfWidth, kArenaHalfHeight, dt);
 
     const float angularSpeed = length(body.angularVelocity);
     if (angularSpeed > 0.00001f) {

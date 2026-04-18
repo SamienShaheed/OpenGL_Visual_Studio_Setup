@@ -1,10 +1,16 @@
 #pragma once
 
+#include <cstddef>
+#include <vector>
+
 #include "math/types.hpp"
 
 constexpr float kArenaHalfWidth = 450.0f;
 constexpr float kArenaHalfHeight = 300.0f;
+constexpr float kArenaWallHeight = 120.0f; // Debug draw only; collision is infinite vertical planes.
 constexpr float kTopRadius = 45.0f;
+// Nominal spin rate about world +Y (upright top); slingshot launch does not add tilt or off-axis ω.
+constexpr float kTopSpinAboutWorldY = 14.0f;
 constexpr int kCircleSegments = 64;
 
 struct RigidBody {
@@ -14,9 +20,17 @@ struct RigidBody {
     Quaternion orientation;
     float mass;
     Vec3 invInertiaBody{};
+    float radius = kTopRadius;
 };
 
-extern RigidBody g_top;
+extern std::vector<RigidBody> g_rigidBodies;
+
+// Only this body is reset / slingshot-launched with Z + floor drag (single “beyblade”).
+constexpr std::size_t kLaunchableBodyIndex = 0;
+
+inline RigidBody& launchableTop() {
+    return g_rigidBodies[kLaunchableBodyIndex];
+}
 
 constexpr float kArenaFloorY = 0.0f;
 
